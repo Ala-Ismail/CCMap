@@ -142,6 +142,8 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// Optional, view-only map backdrop state. It is not part of the drawing or undo snapshots.
+    pub map: cadcraft_map::MapState,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -168,6 +170,7 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            map: cadcraft_map::MapState::default(),
         }
     }
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet

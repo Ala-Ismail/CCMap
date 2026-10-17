@@ -1,0 +1,17 @@
+[package]
+name = "cadcraft-map"
+description = "CADCraft map foundations: CRS identifiers, registrations, and XYZ tile mathematics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+proj4rs = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -35,6 +35,7 @@ pub mod i18n;
 pub mod icons;
 pub mod layers;
 pub mod managers;
+pub mod map;
 pub mod menus;
 pub mod opening;
 pub mod options;

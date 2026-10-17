@@ -1601,6 +1601,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }));
     ensure_list(app, &xf_paper, &views, ui.ctx());
     let sheet = app.canvas.list.as_ref().and_then(|l| l.sheet);
+    let mut map_status = crate::map::PaintStatus::Off;
     let bg = match sheet {
         Some(sh) => {
             // Paper space: grey surround, the sheet with a shadow, the printable area dashed.
@@ -1620,6 +1621,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         None => {
             blockedit::wash(app, &painter, rect);
+            map_status = crate::map::paint_background(&app.session, &painter, &xf, rect);
             draw_grid(app, &painter, &xf);
             Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b())
         }
@@ -1834,6 +1836,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         draw_viewcube(app, ui, rect);
     }
     viewport_label(&painter, rect);
+    crate::map::paint_overlay(&painter, rect, map_status);
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.

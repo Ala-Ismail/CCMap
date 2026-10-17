@@ -633,6 +633,7 @@ dependencies = [
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-io",
+ "cadcraft-map",
  "cadcraft-render",
  "log",
  "rstar",
@@ -668,6 +669,7 @@ dependencies = [
  "cadcraft-dxf",
  "cadcraft-fonts",
  "cadcraft-geom",
+ "cadcraft-map",
  "cadcraft-render",
  "miniz_oxide 0.8.9",
  "quick-xml",
@@ -675,6 +677,16 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tiny-skia",
+]
+
+[[package]]
+name = "cadcraft-map"
+version = "0.7.0"
+dependencies = [
+ "proj4rs",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -711,6 +723,7 @@ dependencies = [
  "cadcraft-engine",
  "cadcraft-fonts",
  "cadcraft-geom",
+ "cadcraft-map",
  "cadcraft-render",
  "craft-ui",
  "egui",
@@ -879,6 +892,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "console_log"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86919cef3e37b9356ccf54d4421208c17ecfda01beae61393e7ffd72916c0ef1"
+dependencies = [
+ "log",
+ "web-sys",
 ]
 
 [[package]]
@@ -3038,6 +3061,19 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
+
+[[package]]
+name = "proj4rs"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9a8e6a70c71f11595fa32f9128ebe56f1d986ad380db858799640a1039a0e2"
+dependencies = [
+ "console_log",
+ "js-sys",
+ "thiserror 2.0.21",
+ "wasm-bindgen",
+ "web-sys",
+]
 
 [[package]]
 name = "pxfm"

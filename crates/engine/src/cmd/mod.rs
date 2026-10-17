@@ -22,6 +22,7 @@ mod inquiry;
 mod layer;
 mod layout;
 mod lisp;
+pub mod map;
 mod mleader_content;
 mod mleader_edit;
 mod modify;
@@ -175,6 +176,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(qselect::specs());
         v.extend(selecttools::specs());
         v.extend(view::specs());
+        v.extend(map::specs());
         v.extend(draw::specs());
         v.extend(draw2::specs());
         v.extend(annotate::specs());

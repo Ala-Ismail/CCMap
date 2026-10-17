@@ -1313,6 +1313,19 @@
 	Set Dynamic Property	Задати динамічну властивість
 	Dynamic Block Grips	Ручки динамічного блока
 	Drag Dynamic Grip	Перетягнути ручку динамічного блока
+# Map backdrop.
+	Map	Карта
+	Map Mode	Режим карти
+	Map Opacity	Непрозорість карти
+	Map Status	Стан карти
+	Opacity	Непрозорість
+	Set Map Georeference	Задати геоприв'язку карти
+	Clear Map Georeference	Очистити геоприв'язку карти
+	Street (Mock)	Вулична карта (макет)
+	25%	25%
+	50%	50%
+	75%	75%
+	100%	100%
 # Block Editor (BEDIT).
 	Save Block	Зберегти блок
 	Save Block As	Зберегти блок як

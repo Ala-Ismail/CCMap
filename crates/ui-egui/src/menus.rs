@@ -39,6 +39,12 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
+    ("ui.map.off", "Off", &["View", "Map", "Off"], None),
+    ("ui.map.street", "Street (Mock)", &["View", "Map", "Street (Mock)"], None),
+    ("ui.map.opacity.25", "25%", &["View", "Map", "Opacity", "25%"], None),
+    ("ui.map.opacity.50", "50%", &["View", "Map", "Opacity", "50%"], None),
+    ("ui.map.opacity.75", "75%", &["View", "Map", "Opacity", "75%"], None),
+    ("ui.map.opacity.100", "100%", &["View", "Map", "Opacity", "100%"], None),
     ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
     ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
     ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
@@ -83,6 +89,17 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(mode) = id.strip_prefix("ui.map.").and_then(|value| match value {
+        "off" | "street" => Some(value),
+        _ => None,
+    }) {
+        return Some(app.session.execute("map.mode", &json!({"mode": mode})).map_err(|error| error.to_string()));
+    }
+    if let Some(opacity) =
+        id.strip_prefix("ui.map.opacity.").and_then(|value| value.parse::<u8>().ok()).filter(|value| [25, 50, 75, 100].contains(value))
+    {
+        return Some(app.session.execute("map.opacity", &json!({"opacity": f64::from(opacity) / 100.0})).map_err(|error| error.to_string()));
+    }
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
