@@ -40,7 +40,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
     ("ui.map.off", "Off", &["View", "Map", "Off"], None),
-    ("ui.map.street", "Street (Mock)", &["View", "Map", "Street (Mock)"], None),
+    ("ui.map.street", "Street (OpenStreetMap)", &["View", "Map", "Street (OpenStreetMap)"], None),
     ("ui.map.opacity.25", "25%", &["View", "Map", "Opacity", "25%"], None),
     ("ui.map.opacity.50", "50%", &["View", "Map", "Opacity", "50%"], None),
     ("ui.map.opacity.75", "75%", &["View", "Map", "Opacity", "75%"], None),

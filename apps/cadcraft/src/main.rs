@@ -111,6 +111,17 @@ impl eframe::App for App {
 
 /// File format hooks for the engine (it stays I/O-agnostic).
 pub fn install_io() {
+    cadcraft_engine::cmd::file::set_map_sidecar(cadcraft_engine::cmd::file::MapSidecarHooks {
+        read: |path| cadcraft_io::read_map_sidecar(std::path::Path::new(path)).map_err(|error| error.to_string()),
+        write: |path, registration| {
+            let path = std::path::Path::new(path);
+            match registration {
+                Some(registration) => cadcraft_io::write_map_sidecar(path, &cadcraft_map::MapMetadata::new(registration)),
+                None => cadcraft_io::remove_map_sidecar(path),
+            }
+            .map_err(|error| error.to_string())
+        },
+    });
     cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
         read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
@@ -380,8 +391,37 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::{config_dir_from, control_flag, control_port_from, filters_for_save, follow_desktop};
+    use serde_json::json;
     use std::ffi::OsString;
     use std::path::PathBuf;
+
+    #[test]
+    fn drawing_save_open_and_clear_round_trip_map_registration() {
+        super::install_io();
+        let directory = std::env::temp_dir().join(format!(
+            "cadcraft-map-host-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_nanos())
+        ));
+        assert!(std::fs::create_dir(&directory).is_ok());
+        let path = directory.join("survey.dxf");
+        let path_text = path.to_string_lossy().to_string();
+        let mut original = cadcraft_engine::Session::new();
+        assert!(original.execute("map.georef.set", &json!({"crs":"EPSG:7855", "drawingAnchor":[0,0], "projectAnchor":[320000,5813000]})).is_ok());
+        assert!(original.execute("saveas", &json!({"path":path_text})).is_ok());
+        let sidecar = cadcraft_io::map_sidecar_path(&path);
+        assert!(sidecar.as_ref().is_ok_and(|sidecar| sidecar.exists()));
+
+        let mut reopened = cadcraft_engine::Session::new();
+        assert!(reopened.execute("open", &json!({"path":path_text})).is_ok());
+        let registration = reopened.state().ok().and_then(|state| state.map.registration);
+        assert_eq!(registration.map(|value| value.crs()), Some(cadcraft_map::CrsId::Gda2020MgaZone55));
+        assert!(reopened.execute("map.georef.clear", &json!({})).is_ok());
+        assert!(reopened.execute("qsave", &json!({})).is_ok());
+        assert!(sidecar.as_ref().is_ok_and(|sidecar| !sidecar.exists()));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&directory);
+    }
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(v))

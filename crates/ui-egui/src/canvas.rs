@@ -1621,7 +1621,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         None => {
             blockedit::wash(app, &painter, rect);
-            map_status = crate::map::paint_background(&app.session, &painter, &xf, rect);
+            map_status = crate::map::paint_background(&app.session, &mut app.map_tiles, &painter, &xf, rect);
             draw_grid(app, &painter, &xf);
             Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b())
         }

@@ -81,7 +81,7 @@ fn status(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!({
         "mode": match map.mode { MapMode::Off => "off", MapMode::Street => "street", MapMode::Satellite => "satellite" },
         "opacity": map.opacity,
-        "provider": if map.mode == MapMode::Street { Some("mock") } else { None },
+        "provider": if map.mode == MapMode::Street { Some("openstreetmap-standard") } else { None },
         "registered": map.registration.is_some(),
         "crs": map.registration.map(|registration| registration.crs().epsg()),
         "status": if map.mode == MapMode::Off { "off" } else if map.registration.is_none() { "georeference required" } else { "ready" },

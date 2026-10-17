@@ -27,7 +27,7 @@ use cadcraft_geom::Bounds2;
 pub use cadcraft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
-pub use map_sidecar::{MAX_MAP_SIDECAR_BYTES, map_sidecar_path, read_map_sidecar, write_map_sidecar};
+pub use map_sidecar::{MAX_MAP_SIDECAR_BYTES, map_sidecar_path, read_map_sidecar, remove_map_sidecar, write_map_sidecar};
 pub use pdf::{PdfOptions, pdf, plot};
 
 /// How a drawing is saved as DXF or DWG.

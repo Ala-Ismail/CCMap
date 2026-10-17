@@ -58,6 +58,16 @@ pub fn write_map_sidecar(drawing_path: &Path, metadata: &MapMetadata) -> Result<
     replace_file(&temporary, &path)
 }
 
+/// Remove stale registration after a drawing is saved with its georeference cleared.
+pub fn remove_map_sidecar(drawing_path: &Path) -> Result<()> {
+    let path = map_sidecar_path(drawing_path)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(file_error(&path, error)),
+    }
+}
+
 fn create_temporary_sidecar(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
     for attempt in 0..MAX_TEMP_ATTEMPTS {
         let temporary = temporary_path(path, attempt)?;

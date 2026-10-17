@@ -25,6 +25,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
+ehttp = "0.7.1"
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }

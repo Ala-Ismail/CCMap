@@ -36,6 +36,7 @@ pub mod icons;
 pub mod layers;
 pub mod managers;
 pub mod map;
+mod map_tiles;
 pub mod menus;
 pub mod opening;
 pub mod options;
@@ -202,6 +203,7 @@ pub struct CadApp {
     pub options: options::UiOptions,
     pub services: Services,
     pub canvas: canvas::CanvasState,
+    map_tiles: map_tiles::TileCache,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
     pub cmd: cmdline::CmdLine,
@@ -256,6 +258,7 @@ impl CadApp {
             options: options::UiOptions::default(),
             services,
             canvas: canvas::CanvasState::default(),
+            map_tiles: map_tiles::TileCache::default(),
             spacemouse: spacemouse::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,

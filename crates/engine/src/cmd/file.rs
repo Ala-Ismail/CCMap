@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 
 use cadcraft_doc::Drawing;
 pub use cadcraft_dxf::Version;
+use cadcraft_map::{MapMetadata, Registration};
 use serde_json::{Value, json};
 
 use super::*;
@@ -35,6 +36,32 @@ pub fn set_io(h: IoHooks) {
 }
 pub fn io() -> Option<&'static IoHooks> {
     IO.get()
+}
+
+/// Host-owned map sidecar I/O. The engine keeps file formats and filesystem access separate.
+pub struct MapSidecarHooks {
+    pub read: fn(&str) -> std::result::Result<Option<MapMetadata>, String>,
+    pub write: fn(&str, Option<Registration>) -> std::result::Result<(), String>,
+}
+
+static MAP_SIDECAR: OnceLock<MapSidecarHooks> = OnceLock::new();
+
+pub fn set_map_sidecar(hooks: MapSidecarHooks) {
+    let _ = MAP_SIDECAR.set(hooks);
+}
+
+fn load_map_sidecar(s: &mut Session, index: usize) {
+    let Some(hooks) = MAP_SIDECAR.get() else { return };
+    let Some(path) = s.docs.get(index).and_then(|state| state.path.as_deref()).map(str::to_owned) else { return };
+    match (hooks.read)(&path) {
+        Ok(Some(metadata)) => {
+            if let Some(state) = s.docs.get_mut(index) {
+                state.map.registration = Some(metadata.registration());
+            }
+        }
+        Ok(None) => {}
+        Err(error) => s.echo(format!("Map registration was not loaded: {error}")),
+    }
 }
 
 /// An entity as DXF groups and back, for AutoLISP's `entget`, `entmake` and `entmod`
@@ -282,6 +309,7 @@ pub fn read_file(path: &str) -> std::result::Result<ReadFile, String> {
 pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     let ReadFile { drawing, binary_dxf, name, path } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
+    load_map_sidecar(s, i);
     super::blocks::xref::after_open(s, i);
     Ok(opened(s, i, true))
 }
@@ -310,7 +338,9 @@ fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, pat
 
 pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option<String>) -> Result<usize> {
     let ReadFile { drawing, binary_dxf, name, path } = read_bytes(bytes, name, path)?;
-    Ok(add_read(s, drawing, binary_dxf, &name, path))
+    let index = add_read(s, drawing, binary_dxf, &name, path);
+    load_map_sidecar(s, index);
+    Ok(index)
 }
 
 /// OPEN's reply: the drawing's index and what reading it left out.
@@ -391,6 +421,10 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
         {
             std::sync::Arc::make_mut(st.drawing_arc_mut()).header.set_str("ACADVER", v.code());
             st.saved = st.drawing().clone();
+        }
+        if let Some(hooks) = MAP_SIDECAR.get() {
+            (hooks.write)(path, s.state()?.map.registration)
+                .map_err(|error| bad(cmd, format!("drawing saved, but map registration was not saved: {error}")))?;
         }
     }
     Ok(n)

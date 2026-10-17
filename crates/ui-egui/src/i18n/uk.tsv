@@ -1321,7 +1321,7 @@
 	Opacity	Непрозорість
 	Set Map Georeference	Задати геоприв'язку карти
 	Clear Map Georeference	Очистити геоприв'язку карти
-	Street (Mock)	Вулична карта (макет)
+	Street (OpenStreetMap)	Вулична карта (OpenStreetMap)
 	25%	25%
 	50%	50%
 	75%	75%
