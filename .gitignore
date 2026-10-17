@@ -9,3 +9,7 @@
 *.swp
 /apps/cadcraft-web/dist/
 /.claude/worktrees/
+/target-map-core/
+/target-map-slice/
+/target-map-slice/
+/target-mcp-probe/

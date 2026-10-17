@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "rust-analyzer": {
+      "type": "stdio",
+      "command": "rust-analyzer-mcp",
+      "args": [
+        "${workspaceFolder}"
+      ]
+    }
+  }}
