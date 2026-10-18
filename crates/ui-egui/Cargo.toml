@@ -27,7 +27,9 @@ log = { workspace = true }
 image = { workspace = true }
 ehttp = "0.7.1"
 
-[target.'cfg(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux")))'.dependencies]
+# keyring's Secret Service backend depends on libdbus-sys, which does not support
+# the BSD targets. BSD builds retain memory-only map-provider keys.
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
 
 [dev-dependencies]

@@ -269,10 +269,7 @@ fn decode_texture(ctx: &Context, id: TileId, bytes: &[u8]) -> Option<TextureHand
 // requires current viewport attribution. This cache requests only tiles in the active viewport.
 const GOOGLE_SESSION_LIFETIME: Duration = Duration::from_secs(12 * 24 * 60 * 60);
 const GOOGLE_RETRY_DELAY: Duration = Duration::from_secs(30);
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-))]
+#[cfg(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 const GOOGLE_KEYRING_SERVICE: &str = "CADCraft";
 const GOOGLE_KEYRING_USER: &str = "Google Maps Platform API key";
 const ESRI_KEYRING_USER: &str = "ArcGIS Location Platform API key";
@@ -380,10 +377,7 @@ impl GoogleTileCache {
     }
 
     pub fn can_remember_key() -> bool {
-        cfg!(all(
-            not(target_arch = "wasm32"),
-            any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-        ))
+        cfg!(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux")))
     }
 
     pub fn key_is_remembered(&self) -> bool {
@@ -958,10 +952,7 @@ fn decode_esri_texture(ctx: &Context, id: TileId, layer: EsriLayer, bytes: &[u8]
     Some(ctx.load_texture(format!("esri-{name}-{}-{}-{}", id.zoom().value(), id.x(), id.y()), pixels, TextureOptions::LINEAR))
 }
 
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-))]
+#[cfg(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn read_saved_key(user: &str) -> Result<Option<String>, &'static str> {
     let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, user).map_err(|_| "Could not access the OS credential store")?;
     match entry.get_password() {
@@ -971,35 +962,23 @@ fn read_saved_key(user: &str) -> Result<Option<String>, &'static str> {
     }
 }
 
-#[cfg(not(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-)))]
+#[cfg(not(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux"))))]
 fn read_saved_key(_user: &str) -> Result<Option<String>, &'static str> {
     Ok(None)
 }
 
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-))]
+#[cfg(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn write_saved_key(user: &str, key: &str) -> Result<(), &'static str> {
     let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, user).map_err(|_| "Could not access the OS credential store")?;
     entry.set_password(key).map_err(|_| "Could not save the key in the OS credential store")
 }
 
-#[cfg(not(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-)))]
+#[cfg(not(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux"))))]
 fn write_saved_key(_user: &str, _key: &str) -> Result<(), &'static str> {
     Err("Remembering keys is unavailable on this platform")
 }
 
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-))]
+#[cfg(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn delete_saved_key(user: &str) -> Result<(), &'static str> {
     let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, user).map_err(|_| "Could not access the OS credential store")?;
     match entry.delete_credential() {
@@ -1008,10 +987,7 @@ fn delete_saved_key(user: &str) -> Result<(), &'static str> {
     }
 }
 
-#[cfg(not(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-)))]
+#[cfg(not(all(not(target_arch = "wasm32"), any(target_os = "windows", target_os = "macos", target_os = "linux"))))]
 fn delete_saved_key(_user: &str) -> Result<(), &'static str> {
     Ok(())
 }
