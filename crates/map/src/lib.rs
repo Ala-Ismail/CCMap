@@ -40,6 +40,8 @@ pub enum MapMode {
     Off,
     Street,
     Satellite,
+    #[serde(rename = "esri-satellite")]
+    EsriSatellite,
 }
 
 /// Map state associated with one open drawing.
@@ -170,6 +172,12 @@ fn valid_provider_credential(value: &str) -> bool {
     !value.is_empty() && value.len() <= 512 && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
+fn valid_arcgis_api_key(value: &str) -> bool {
+    // ArcGIS API-key access tokens may contain a period separator (for example, `...key.part`).
+    // Keep the accepted alphabet header-safe and reject whitespace/control characters.
+    !value.is_empty() && value.len() <= 512 && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~'))
+}
+
 impl TileProvider for GoogleMapsSatellite<'_> {
     fn info(&self) -> ProviderInfo {
         ProviderInfo { id: "google-maps-satellite", name: "Google Maps Satellite", attribution: "Google Maps", min_zoom: Zoom(0), max_zoom: Zoom(22) }
@@ -181,6 +189,68 @@ impl TileProvider for GoogleMapsSatellite<'_> {
         }
         let session = self.session.ok_or(MapError::ProviderSessionRequired)?;
         Ok(format!("https://tile.googleapis.com/v1/2dtiles/{}/{}/{}?session={session}&key={}", tile.zoom.value(), tile.x, tile.y, self.api_key))
+    }
+}
+
+/// Esri's current World Imagery tiles plus the Static Basemap Tiles imagery-label overlay.
+/// The ArcGIS Location Platform API key is supplied at runtime. World Imagery uses the documented
+/// `token` query parameter; the Static Basemap Tiles overlay uses a Bearer authorization header.
+/// Esri tile pixels are memory-only in the UI adapter.
+#[derive(Clone, Copy)]
+pub struct EsriWorldImagery<'a> {
+    api_key: &'a str,
+}
+
+impl<'a> EsriWorldImagery<'a> {
+    pub fn new(api_key: &'a str) -> Result<Self> {
+        if !valid_arcgis_api_key(api_key) {
+            return Err(MapError::InvalidProviderCredential);
+        }
+        Ok(Self { api_key })
+    }
+
+    pub fn imagery_tile_url(self, tile: TileId) -> Result<String> {
+        self.check_zoom(tile)?;
+        Ok(format!(
+            "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{}/{}/{}?token={}",
+            tile.zoom.value(),
+            tile.y,
+            tile.x,
+            self.api_key
+        ))
+    }
+
+    pub fn labels_tile_url(self, tile: TileId) -> Result<String> {
+        self.check_zoom(tile)?;
+        Ok(format!(
+            "https://static-map-tiles-api.arcgis.com/arcgis/rest/services/static-basemap-tiles-service/v1/arcgis/imagery/labels/static/tile/{}/{}/{}",
+            tile.zoom.value(),
+            tile.y,
+            tile.x
+        ))
+    }
+
+    fn check_zoom(self, tile: TileId) -> Result<()> {
+        if tile.zoom.value() > 19 {
+            return Err(MapError::ProviderZoomOutOfRange);
+        }
+        Ok(())
+    }
+}
+
+impl TileProvider for EsriWorldImagery<'_> {
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo {
+            id: "esri-world-imagery",
+            name: "Esri World Imagery with Labels",
+            attribution: "Powered by Esri; imagery and label-source credits required",
+            min_zoom: Zoom(0),
+            max_zoom: Zoom(19),
+        }
+    }
+
+    fn tile_url(&self, tile: TileId) -> Result<String> {
+        self.imagery_tile_url(tile)
     }
 }
 
@@ -917,7 +987,7 @@ mod tests {
         };
         let provider = match GoogleMapsSatellite::new("AIza_test-123", None) {
             Ok(value) => value,
-            Err(error) => unreachable!("test key must be URL-safe: {error}"),
+            Err(error) => unreachable!("test key must be valid for the ArcGIS authorization header: {error}"),
         };
         assert_eq!(provider.tile_url(tile), Err(MapError::ProviderSessionRequired));
         assert_eq!(provider.session_url(), "https://tile.googleapis.com/v1/createSession?key=AIza_test-123");
@@ -930,6 +1000,35 @@ mod tests {
             Ok("https://tile.googleapis.com/v1/2dtiles/15/6294/13288?session=session-123&key=AIza_test-123")
         );
         assert!(GoogleMapsSatellite::new("key&other=value", None).is_err());
+    }
+
+    #[test]
+    fn esri_world_imagery_builds_imagery_and_label_tiles_with_validated_credentials() {
+        let tile = match TileId::new(zoom(15), 6294, 13288) {
+            Ok(value) => value,
+            Err(error) => unreachable!("test tile must be valid: {error}"),
+        };
+        let provider = match EsriWorldImagery::new("AAPK_test-key_123.part~token") {
+            Ok(value) => value,
+            Err(error) => unreachable!("test key must be URL-safe: {error}"),
+        };
+        assert_eq!(
+            provider.imagery_tile_url(tile).as_deref(),
+            Ok("https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/15/13288/6294?token=AAPK_test-key_123.part~token")
+        );
+        assert_eq!(
+            provider.labels_tile_url(tile).as_deref(),
+            Ok(
+                "https://static-map-tiles-api.arcgis.com/arcgis/rest/services/static-basemap-tiles-service/v1/arcgis/imagery/labels/static/tile/15/13288/6294"
+            )
+        );
+        assert!(EsriWorldImagery::new("key&other=value").is_err());
+        assert!(EsriWorldImagery::new("key.with.period").is_ok());
+        let too_deep = match TileId::new(zoom(20), 0, 0) {
+            Ok(value) => value,
+            Err(error) => unreachable!("test tile must be valid: {error}"),
+        };
+        assert_eq!(provider.tile_url(too_deep), Err(MapError::ProviderZoomOutOfRange));
     }
 
     #[test]

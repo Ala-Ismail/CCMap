@@ -323,6 +323,9 @@ fn main() -> eframe::Result {
             if let Err(error) = app.load_remembered_google_map_key() {
                 app.set_status(format!("Google Maps key could not be restored: {error}"));
             }
+            if let Err(error) = app.load_remembered_esri_map_key() {
+                app.set_status(format!("ArcGIS key could not be restored: {error}"));
+            }
             let (workspace, restored, workspace_error) = workspace::Workspace::load();
             if let Some(ui) = restored {
                 app.ui = ui;

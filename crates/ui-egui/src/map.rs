@@ -19,6 +19,9 @@ pub enum PaintStatus {
     GoogleKeyRequired,
     GoogleLoading,
     GoogleUnavailable,
+    EsriKeyRequired,
+    EsriLoading,
+    EsriUnavailable,
     Tiles { count: usize, zoom: u8, provider: MapMode },
     InvalidRegistration,
 }
@@ -198,6 +201,127 @@ pub fn google_key_dialog(app: &mut crate::CadApp, ctx: &egui::Context, open: &mu
     });
 }
 
+/// Set a user-owned ArcGIS Location Platform key for Esri imagery and label tile requests.
+/// Remembering is opt-in and stores it only in the current OS user's credential store.
+pub fn esri_key_dialog(app: &mut crate::CadApp, ctx: &egui::Context, open: &mut bool) {
+    let id = egui::Id::new("map_esri_api_key_entry");
+    let remember_id = egui::Id::new("map_esri_api_key_remember");
+    let error_id = egui::Id::new("map_esri_api_key_error");
+    let mut key = ctx.data_mut(|data| data.get_temp::<String>(id)).unwrap_or_default();
+    let can_remember = crate::map_tiles::EsriTileCache::can_remember_key();
+    let mut remember =
+        ctx.data_mut(|data| data.get_temp::<bool>(remember_id)).unwrap_or_else(|| can_remember && app.esri_map_tiles.key_is_remembered());
+    let mut error = ctx.data_mut(|data| data.get_temp::<String>(error_id));
+    let mut apply = false;
+    let mut clear = false;
+    let mut close = false;
+    egui::Window::new("Esri World Imagery with Labels")
+        .id(egui::Id::new("Esri World Imagery with Labels"))
+        .open(open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(390.0)
+        .show(ctx, |ui| {
+            ui.label("Use your ArcGIS Location Platform API key for World Imagery and its label overlay.");
+            ui.label("Enable Basemaps + Static Basemap Tiles privileges for this key; usage may be billed.");
+            ui.label("Imagery uses Esri's token parameter; labels use a Bearer authorization header.");
+            ui.add(egui::TextEdit::singleline(&mut key).password(true).hint_text("ArcGIS API key").desired_width(340.0));
+            if can_remember {
+                ui.checkbox(&mut remember, "Remember on this computer (OS credential store)");
+                ui.label("Stored for your OS user only, never in CADCraft files or the repository.");
+            } else {
+                ui.label("Credential storage is unavailable here; the key is session-only.");
+            }
+            ui.label(if app.esri_map_tiles.has_api_key() {
+                if app.esri_map_tiles.key_is_remembered() {
+                    "An ArcGIS key is active and remembered for this user."
+                } else {
+                    "An ArcGIS key is active for this session."
+                }
+            } else if app.esri_map_tiles.key_is_remembered() {
+                "An ArcGIS key is saved for this user."
+            } else {
+                "No ArcGIS key configured."
+            });
+            if let Some(message) = error.as_deref() {
+                ui.colored_label(Color32::LIGHT_RED, message);
+            }
+            ui.horizontal(|ui| {
+                let action = if remember { "Use Key and Remember" } else { "Use Key This Session" };
+                if ui.add_enabled(!key.trim().is_empty(), egui::Button::new(action)).clicked() {
+                    apply = true;
+                }
+                if ui
+                    .add_enabled(
+                        app.esri_map_tiles.has_api_key() || app.esri_map_tiles.key_is_remembered(),
+                        egui::Button::new("Clear and Forget Key"),
+                    )
+                    .clicked()
+                {
+                    clear = true;
+                }
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+        });
+    if apply {
+        match app.esri_map_tiles.set_api_key(Some(key.trim().to_owned())) {
+            Ok(()) if remember => match app.esri_map_tiles.remember_current_key() {
+                Ok(()) => {
+                    key.clear();
+                    error = None;
+                    close = true;
+                }
+                Err(message) => error = Some(message.to_owned()),
+            },
+            Ok(()) => match app.esri_map_tiles.forget_remembered_key() {
+                Ok(()) => {
+                    key.clear();
+                    error = None;
+                    close = true;
+                }
+                Err(message) => error = Some(message.to_owned()),
+            },
+            Err(message) => error = Some(message),
+        }
+    }
+    if clear {
+        match app.esri_map_tiles.forget_remembered_key() {
+            Ok(()) => {
+                let _ = app.esri_map_tiles.set_api_key(None);
+                remember = false;
+                key.clear();
+                error = None;
+            }
+            Err(message) => error = Some(message.to_owned()),
+        }
+    }
+    if close || !*open {
+        key.clear();
+        error = None;
+        app.ui.dialog = None;
+        *open = false;
+    }
+    ctx.data_mut(|data| {
+        if key.is_empty() {
+            data.remove_temp::<String>(id);
+        } else {
+            data.insert_temp(id, key);
+        }
+        if *open {
+            data.insert_temp(remember_id, remember);
+        } else {
+            data.remove_temp::<bool>(remember_id);
+        }
+        if let Some(message) = error {
+            data.insert_temp(error_id, message);
+        } else {
+            data.remove_temp::<String>(error_id);
+        }
+    });
+}
+
 fn selected_label(epsg: &str) -> String {
     let Some(crs) = cadcraft_map::CrsId::MGA.iter().copied().find(|crs| crs.epsg() == epsg) else { return epsg.to_owned() };
     let Some((datum, zone)) = crs.mga_details() else { return epsg.to_owned() };
@@ -208,6 +332,7 @@ pub fn paint_background(
     session: &Session,
     cache: &mut TileCache,
     google_cache: &mut crate::map_tiles::GoogleTileCache,
+    esri_cache: &mut crate::map_tiles::EsriTileCache,
     painter: &Painter,
     xf: &Xf,
     clip: Rect,
@@ -220,11 +345,16 @@ pub fn paint_background(
     if map.mode == MapMode::Satellite && !google_cache.has_api_key() {
         return PaintStatus::GoogleKeyRequired;
     }
+    if map.mode == MapMode::EsriSatellite && !esri_cache.has_api_key() {
+        return PaintStatus::EsriKeyRequired;
+    }
     let Some(registration) = map.registration else { return PaintStatus::GeoreferenceRequired };
     if map.mode == MapMode::Street {
         cache.begin_frame(painter.ctx());
-    } else {
+    } else if map.mode == MapMode::Satellite {
         google_cache.begin_frame(painter.ctx());
+    } else {
+        esri_cache.begin_frame(painter.ctx());
     }
     let corners = [clip.left_top(), clip.right_top(), clip.left_bottom(), clip.right_bottom()];
     let geographic: Option<Vec<_>> = corners
@@ -269,8 +399,17 @@ pub fn paint_background(
                 MapMode::Off => None,
                 MapMode::Street => cache.texture(painter.ctx(), tile).cloned(),
                 MapMode::Satellite => google_cache.texture(tile).cloned(),
+                MapMode::EsriSatellite => {
+                    let (imagery, labels) = esri_cache.textures(tile);
+                    let imagery_painted = paint_tile(painter, xf, registration, tile, imagery.as_ref(), alpha);
+                    let labels_painted = paint_tile(painter, xf, registration, tile, labels.as_ref(), alpha);
+                    if imagery_painted || labels_painted {
+                        count += 1;
+                    }
+                    None
+                }
             };
-            if paint_tile(painter, xf, registration, tile, texture.as_ref(), alpha) {
+            if map.mode != MapMode::EsriSatellite && paint_tile(painter, xf, registration, tile, texture.as_ref(), alpha) {
                 count += 1;
             }
         }
@@ -286,11 +425,18 @@ pub fn paint_background(
         MapMode::Off => {}
         MapMode::Street => cache.request_visible(painter.ctx(), &visible),
         MapMode::Satellite => google_cache.request_visible(painter.ctx(), &visible, zoom, bounds),
+        MapMode::EsriSatellite => esri_cache.request_visible(painter.ctx(), &visible),
     }
     #[cfg(test)]
-    let _ = (visible, bounds);
+    let _ = (&visible, bounds);
     if map.mode == MapMode::Satellite && google_cache.attribution().is_none() {
         return if google_cache.error_message().is_some() { PaintStatus::GoogleUnavailable } else { PaintStatus::GoogleLoading };
+    }
+    if map.mode == MapMode::EsriSatellite && esri_cache.has_error() {
+        return PaintStatus::EsriUnavailable;
+    }
+    if map.mode == MapMode::EsriSatellite && visible.iter().any(|tile| !esri_cache.has_complete_tile(*tile)) {
+        return PaintStatus::EsriLoading;
     }
     PaintStatus::Tiles { count, zoom: zoom.value(), provider: map.mode }
 }
@@ -334,6 +480,9 @@ pub fn paint_overlay(
     google_attribution: Option<&str>,
     google_request_status: &str,
     google_diagnostic: Option<&str>,
+    esri_attribution: Option<&str>,
+    esri_request_status: &str,
+    esri_diagnostic: Option<&str>,
 ) {
     let message = match status {
         PaintStatus::Off => return,
@@ -341,8 +490,12 @@ pub fn paint_overlay(
         PaintStatus::GoogleKeyRequired => "Satellite map: configure a Google Maps API key",
         PaintStatus::GoogleLoading => google_request_status,
         PaintStatus::GoogleUnavailable => "Google Maps satellite imagery is unavailable",
+        PaintStatus::EsriKeyRequired => "Satellite map: configure an ArcGIS API key",
+        PaintStatus::EsriLoading => esri_request_status,
+        PaintStatus::EsriUnavailable => "Esri satellite imagery is unavailable",
         PaintStatus::InvalidRegistration => "Map: registration cannot be displayed",
         PaintStatus::Tiles { provider: MapMode::Satellite, .. } => "Google Maps",
+        PaintStatus::Tiles { provider: MapMode::EsriSatellite, .. } => "Esri World Imagery",
         PaintStatus::Tiles { provider: MapMode::Street, .. } => "© OpenStreetMap contributors · openstreetmap.org/copyright",
         PaintStatus::Tiles { provider: MapMode::Off, .. } => return,
     };
@@ -361,6 +514,15 @@ pub fn paint_overlay(
         painter.rect_filled(detail_bg, 2.0, Color32::from_black_alpha(190));
         painter.galley(pos2(detail_at.x, detail_at.y - detail.size().y), detail, Color32::WHITE);
     }
+    if let Some(attribution) = esri_attribution.filter(|_| {
+        matches!(status, PaintStatus::EsriLoading | PaintStatus::EsriUnavailable | PaintStatus::Tiles { provider: MapMode::EsriSatellite, .. })
+    }) {
+        let detail = painter.layout_no_wrap(attribution.to_owned(), FontId::proportional(10.0), Color32::WHITE);
+        let detail_at = pos2(clip.right() - detail.size().x - 8.0, clip.bottom() - 48.0);
+        let detail_bg = Rect::from_min_max(pos2(detail_at.x - 4.0, detail_at.y - detail.size().y - 3.0), pos2(clip.right() - 4.0, detail_at.y + 3.0));
+        painter.rect_filled(detail_bg, 2.0, Color32::from_black_alpha(190));
+        painter.galley(pos2(detail_at.x, detail_at.y - detail.size().y), detail, Color32::WHITE);
+    }
     if let Some(diagnostic) = google_diagnostic.filter(|_| {
         matches!(
             status,
@@ -372,6 +534,32 @@ pub fn paint_overlay(
     }) {
         // Keep the multi-line diagnostics at the top of the viewport, clear of the command bar
         // and copyright overlay. This is intentionally visible while satellite mode is active.
+        let lines: Vec<_> =
+            diagnostic.lines().map(|line| painter.layout_no_wrap(line.to_owned(), FontId::proportional(11.0), Color32::WHITE)).collect();
+        let width = lines.iter().map(|line| line.size().x).fold(0.0_f32, f32::max);
+        let height = lines.iter().map(|line| line.size().y).sum::<f32>() + 2.0 * lines.len().saturating_sub(1) as f32;
+        let at = pos2(clip.left() + 10.0, clip.top() + 10.0);
+        painter.rect_filled(
+            Rect::from_min_size(at - egui::vec2(6.0, 5.0), egui::vec2(width + 12.0, height + 10.0)),
+            3.0,
+            Color32::from_black_alpha(220),
+        );
+        let mut y = at.y;
+        for line in lines {
+            let line_height = line.size().y;
+            painter.galley(pos2(at.x, y), line, Color32::WHITE);
+            y += line_height + 2.0;
+        }
+    }
+    if let Some(diagnostic) = esri_diagnostic.filter(|_| {
+        matches!(
+            status,
+            PaintStatus::EsriKeyRequired
+                | PaintStatus::EsriLoading
+                | PaintStatus::EsriUnavailable
+                | PaintStatus::Tiles { provider: MapMode::EsriSatellite, .. }
+        )
+    }) {
         let lines: Vec<_> =
             diagnostic.lines().map(|line| painter.layout_no_wrap(line.to_owned(), FontId::proportional(11.0), Color32::WHITE)).collect();
         let width = lines.iter().map(|line| line.size().x).fold(0.0_f32, f32::max);
@@ -421,6 +609,19 @@ mod tests {
     }
 
     #[test]
+    fn esri_provider_credentials_stay_out_of_preferences_and_have_a_configuration_dialog() {
+        let mut app = crate::CadApp::new(Session::new(), crate::Services::default());
+        assert!(app.esri_map_tiles.set_api_key(Some("AAPK_test-key_123.part~token".to_owned())).is_ok());
+        assert!(app.esri_map_tiles.has_api_key());
+        assert!(!app.prefs_json().contains("AAPK_test-key_123.part~token"));
+        assert!(!app.profile_json().contains("AAPK_test-key_123.part~token"));
+        assert!(app.esri_map_tiles.set_api_key(None).is_ok());
+        assert!(!app.esri_map_tiles.has_api_key());
+        assert!(app.run("ui.map.esri_key", serde_json::Value::Null).is_ok());
+        assert_eq!(app.ui.dialog.as_deref(), Some("map_esri_key"));
+    }
+
+    #[test]
     fn off_and_missing_registration_request_no_tiles() {
         let mut session = Session::new();
         let context = Context::default();
@@ -431,21 +632,21 @@ mod tests {
         let mut status = PaintStatus::InvalidRegistration;
         let mut output = context.run_ui(RawInput::default(), |ui| {
             let painter = Painter::new(ui.ctx().clone(), LayerId::background(), clip);
-            status = paint_background(&session, &mut cache, &mut google_cache, &painter, &xf, clip);
+            status = paint_background(&session, &mut cache, &mut google_cache, &mut crate::map_tiles::EsriTileCache::default(), &painter, &xf, clip);
         });
         output.textures_delta.clear();
         assert_eq!(status, PaintStatus::Off);
         assert!(session.execute("map.mode", &json!({"mode":"street"})).is_ok());
         let mut output = context.run_ui(RawInput::default(), |ui| {
             let painter = Painter::new(ui.ctx().clone(), LayerId::background(), clip);
-            status = paint_background(&session, &mut cache, &mut google_cache, &painter, &xf, clip);
+            status = paint_background(&session, &mut cache, &mut google_cache, &mut crate::map_tiles::EsriTileCache::default(), &painter, &xf, clip);
         });
         output.textures_delta.clear();
         assert_eq!(status, PaintStatus::GeoreferenceRequired);
         assert!(session.execute("map.mode", &json!({"mode":"satellite"})).is_ok());
         let mut output = context.run_ui(RawInput::default(), |ui| {
             let painter = Painter::new(ui.ctx().clone(), LayerId::background(), clip);
-            status = paint_background(&session, &mut cache, &mut google_cache, &painter, &xf, clip);
+            status = paint_background(&session, &mut cache, &mut google_cache, &mut crate::map_tiles::EsriTileCache::default(), &painter, &xf, clip);
         });
         output.textures_delta.clear();
         assert_eq!(status, PaintStatus::GoogleKeyRequired);
@@ -464,7 +665,7 @@ mod tests {
         let mut status = PaintStatus::InvalidRegistration;
         let mut output = context.run_ui(RawInput::default(), |ui| {
             let painter = Painter::new(ui.ctx().clone(), LayerId::background(), clip);
-            status = paint_background(&session, &mut cache, &mut google_cache, &painter, &xf, clip);
+            status = paint_background(&session, &mut cache, &mut google_cache, &mut crate::map_tiles::EsriTileCache::default(), &painter, &xf, clip);
         });
         output.textures_delta.clear();
         let PaintStatus::Tiles { count, .. } = status else {
@@ -487,10 +688,38 @@ mod tests {
         let mut status = PaintStatus::Off;
         let mut output = context.run_ui(RawInput::default(), |ui| {
             let painter = Painter::new(ui.ctx().clone(), LayerId::background(), clip);
-            status = paint_background(&session, &mut cache, &mut google_cache, &painter, &xf, clip);
+            status = paint_background(&session, &mut cache, &mut google_cache, &mut crate::map_tiles::EsriTileCache::default(), &painter, &xf, clip);
         });
         output.textures_delta.clear();
         assert_eq!(status, PaintStatus::GoogleLoading);
         assert_eq!(google_cache.attribution(), None);
+    }
+
+    #[test]
+    fn esri_satellite_mode_requires_key_and_selects_imagery_with_labels() {
+        let mut session = Session::new();
+        assert!(session.execute("map.mode", &json!({"mode":"esri-satellite"})).is_ok());
+        assert!(session.execute("map.georef.set", &json!({"crs":"EPSG:7855", "drawingAnchor":[0,0], "projectAnchor":[320000,5813000]})).is_ok());
+        let context = Context::default();
+        let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 600.0));
+        let xf = Xf { rect: clip, center: Vec2::ZERO, scale: 4.0 };
+        let mut cache = TileCache::default();
+        let mut google_cache = crate::map_tiles::GoogleTileCache::default();
+        let mut esri_cache = crate::map_tiles::EsriTileCache::default();
+        let mut status = PaintStatus::Off;
+        let mut output = context.run_ui(RawInput::default(), |ui| {
+            let painter = Painter::new(ui.ctx().clone(), LayerId::background(), clip);
+            status = paint_background(&session, &mut cache, &mut google_cache, &mut esri_cache, &painter, &xf, clip);
+        });
+        output.textures_delta.clear();
+        assert_eq!(status, PaintStatus::EsriKeyRequired);
+        assert!(esri_cache.set_api_key(Some("arcgis_test-key_123".to_owned())).is_ok());
+        let mut output = context.run_ui(RawInput::default(), |ui| {
+            let painter = Painter::new(ui.ctx().clone(), LayerId::background(), clip);
+            status = paint_background(&session, &mut cache, &mut google_cache, &mut esri_cache, &painter, &xf, clip);
+        });
+        output.textures_delta.clear();
+        assert_eq!(status, PaintStatus::EsriLoading);
+        assert!(esri_cache.attribution().contains("TomTom"));
     }
 }

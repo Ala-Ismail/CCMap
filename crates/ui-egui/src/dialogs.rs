@@ -31,6 +31,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         "map_crs" => crate::map::crs_dialog(app, ctx, &mut open),
         "map_google_key" => crate::map::google_key_dialog(app, ctx, &mut open),
+        "map_esri_key" => crate::map::esri_key_dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
         other => crate::managers::dialog(app, ctx, other, &mut open),
     }

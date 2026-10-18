@@ -1,6 +1,6 @@
 # Map integration: Phase 0 implementation plan
 
-**Status:** Native OSM and Google hybrid backdrops implemented; CAD-export isolation and native/WASM/layer checks verified 2026-10-18. Browser-host sidecar import/export remains future work.
+**Status:** Native OSM and Google hybrid backdrops implemented; Esri World Imagery with labels added using the documented two-layer raster flow. Esri BYOK credentials are memory-only by default with optional OS credential-store persistence on supported desktop systems; tile textures remain memory-only. CAD-export isolation and native/WASM/layer checks remain required for this provider. Browser-host sidecar import/export remains future work.
 **Date:** 2026-10-18
 
 This turns the design in the local `map-integration.md` into an implementation sequence. It adds a
@@ -18,8 +18,10 @@ undo item, or default export layer.
   built-in Street provider. Its adapter enforces visible attribution, identifying User-Agent,
   cache headers, and no prefetch/offline download. Self-hosted or approved hosted
   OpenStreetMap-derived providers remain configuration-selectable alternatives.
-- Satellite provider: no built-in provider or endpoint in the first slice. A configured provider
-  must declare attribution, zoom bounds, cache rules, and whether satellite mode is licensed.
+- Satellite providers: Google hybrid and Esri World Imagery with labels are separate sources.
+  Esri composes the World Imagery raster tile service with the Static Basemap Tiles
+  `arcgis/imagery/labels` overlay. It uses a user-supplied ArcGIS access token, shows both sources'
+  attribution, and retains tile images in memory only. No Wayback/date selector or offline cache.
 - Commercial-provider adapter target: MapTiler Cloud is the first integration candidate, not an
   embedded credential. It requires the user's own key, visible attribution, direct client requests,
   and its end-user cache restrictions. Production activation requires an account owner to approve
@@ -47,7 +49,7 @@ Phase 1 introduces non-interactive JSON forms with finite-number validation:
 
 | Command | Parameters | Result |
 |---|---|---|
-| `map.mode` | `{ mode: "off" | "street" | "satellite" }` | Changes the view mode; `off` cancels/avoids requests. |
+| `map.mode` | `{ mode: "off" | "street" | "satellite" | "esri-satellite" }` | Changes the view mode; `off` cancels/avoids requests. |
 | `map.opacity` | `{ opacity: 0.0..1.0 }` | Changes map compositing opacity. |
 | `map.georef.set` | `{ crs, drawingAnchor: [x,y], projectAnchor: [x,y], rotation?, scale? }` | Validates and stores the registration for sidecar save. |
 | `map.georef.clear` | `{}` | Removes the in-memory registration and requests sidecar removal on save. |
@@ -72,10 +74,14 @@ preference serialization owns the default mode and opacity; the sidecar owns onl
    a bounded decoded image cache. Compose tiles using `Xf` underneath grid/CAD content, draw
    attribution, loading, georeference-required, and error states. Verify no map primitives reach a
    `DisplayList` or `cadcraft-render` export.
-5. **Transport and provider activation — implemented and verified 2026-10-18.** Implement the OpenStreetMap Standard adapter with
+5. **Transport and provider activation — initial providers implemented and verified 2026-10-18.** Implement the OpenStreetMap Standard adapter with
    queued-request cancellation, request de-duplication, bounded concurrency, conditional requests, and cache
    header handling at the application boundary. Google hybrid satellite tiles use a separate
-   memory-only cache and BYOK key/session flow; provider attribution is isolated from OSM. Keep
+   memory-only cache and BYOK key/session flow. Esri satellite mode requests World Imagery and
+   `arcgis/imagery/labels` from Esri's Static Basemap Tiles service, using an ArcGIS key held in
+   memory by default with opt-in OS credential-store persistence, using Esri's `token` query
+   parameter for World Imagery and a Bearer authorization header for labels, with separate in-memory imagery/
+   label textures. Provider attribution is isolated from OSM. Keep
    provider policy separate from georeferencing and canvas code.
 
 ## Required verification
@@ -104,3 +110,5 @@ preference serialization owns the default mode and opacity; the sidecar owns onl
 
 - [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/)
 - [MapTiler Cloud terms](https://www.maptiler.com/terms/cloud/)
+- [Esri: display multiple basemap layers (World Imagery + imagery labels)](https://developers.arcgis.com/maplibre-gl-js/maps/raster-tile-basemaps/display-multiple-basemap-layers/)
+- [Esri Static Basemap Tiles API](https://developers.arcgis.com/rest/static-basemap-tiles/)

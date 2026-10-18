@@ -43,6 +43,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.map.street", "Street (OpenStreetMap)", &["View", "Map", "Street (OpenStreetMap)"], None),
     ("ui.map.satellite", "Satellite (Google Maps)", &["View", "Map", "Satellite (Google Maps)"], None),
     ("ui.map.google_key", "Configure Google Maps API Key...", &["View", "Map", "Configure Google Maps API Key..."], None),
+    ("ui.map.esri_satellite", "Satellite with Labels (Esri)", &["View", "Map", "Satellite with Labels (Esri)"], None),
+    ("ui.map.esri_key", "Configure Esri API Key...", &["View", "Map", "Configure Esri API Key..."], None),
     ("ui.map.crs", "Set Map CRS...", &["View", "Map", "Set Map CRS..."], None),
     ("ui.map.opacity.25", "25%", &["View", "Map", "Opacity", "25%"], None),
     ("ui.map.opacity.50", "50%", &["View", "Map", "Opacity", "50%"], None),
@@ -100,8 +102,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         app.ui.dialog = Some("map_google_key".into());
         return Some(Ok(Value::Null));
     }
+    if id == "ui.map.esri_key" {
+        app.ui.dialog = Some("map_esri_key".into());
+        return Some(Ok(Value::Null));
+    }
     if let Some(mode) = id.strip_prefix("ui.map.").and_then(|value| match value {
-        "off" | "street" | "satellite" => Some(value),
+        "off" | "street" | "satellite" | "esri_satellite" => Some(if value == "esri_satellite" { "esri-satellite" } else { value }),
         _ => None,
     }) {
         return Some(app.session.execute("map.mode", &json!({"mode": mode})).map_err(|error| error.to_string()));

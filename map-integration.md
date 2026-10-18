@@ -16,7 +16,7 @@ Add an optional map backdrop to CADCraft. The map helps place and inspect a draw
 - The project CRS and georeferencing must be explicit. Never assume that arbitrary drawing coordinates are longitude/latitude or a particular projected CRS.
 - For the common survey-DWG workflow, the drawing already contains coordinates in its correct MGA zone. The user selects/confirms that zone, and CADCraft uses the existing drawing coordinates unchanged: do not assume `(0,0)` is a survey origin and do not apply an origin shift, scale, rotation, or other registration transform.
 - Anchor-based correction/alignment is optional and separate from CRS selection. It is not required for an already-correct MGA survey drawing; users who need it can explicitly align map registration without modifying drawing geometry.
-- Keep map providers replaceable. Street and satellite sources can have different providers and terms. The satellite mode uses Google Maps Platform Map Tiles API hybrid tiles (satellite imagery with Google's roadmap layer composited into each tile) with a user-supplied (BYOK) key; Google tiles are a separate map mode and are not mixed with OpenStreetMap imagery.
+- Keep map providers replaceable. Street and satellite sources can have different providers and terms. Satellite imagery may use Google Maps Platform Map Tiles API hybrid tiles (satellite imagery with Google's roadmap layer composited into each tile) with a user-supplied (BYOK) key, or Esri's current World Imagery with labels. Esri's documented integration uses World Imagery map tiles as the raster base and `arcgis/imagery/labels` from the Static Basemap Tiles service as a transparent overlay. Esri World Imagery is the current mosaic, not the historical Wayback archive; imagery date, resolution, and source vary by location. These sources remain separate alternatives and are not mixed with OpenStreetMap imagery.
 
 This carries forward the earlier LibreCAD discussion: a native CAD canvas overlay, not a consumer map browser embedded as a terms workaround. OpenStreetMap-derived street data and a separately licensed satellite source are viable provider categories. Google Maps would require its supported API, key/billing, attribution, and a terms review; browser embedding does not remove those requirements.
 
@@ -63,7 +63,11 @@ A new or existing drawing without a configured CRS must show a clear CRS-require
 
 ### 3.3 Provider interface and policy
 
-Model providers behind a provider-independent interface that returns tile bytes plus source identity, attribution, zoom limits, and source-specific cache rules. Start with one street provider suitable for development and internal evaluation. Add satellite imagery only after its provider and licence are selected.
+Model providers behind a provider-independent interface that returns tile bytes plus source identity, attribution, zoom limits, and source-specific cache rules. Esri's current World Imagery provider uses two aligned XYZ raster sources: the `World_Imagery/MapServer/tile/{z}/{y}/{x}` imagery base and the Static Basemap Tiles `arcgis/imagery/labels/static/tile/{z}/{y}/{x}` overlay. Both receive the user-supplied ArcGIS access token. This is Esri's documented third-party integration pattern; it avoids scraping Wayback or embedding Esri's viewer. Keep their textures as independent layers so labels stay composited over imagery.
+
+- Show Esri and all applicable imagery/label-provider credits while either layer is visible. Use service metadata/acknowledgments where available and do not omit provider credits. Esri identifies World Imagery as licensed under its Master Agreement and directs users to the applicable Terms of Use. Its World Imagery (for Export) item is specifically for offline exports and is not intended for live tile display; do not use it as the live source or infer offline/persistent storage rights for the regular basemap. Follow the Static Basemap Tiles service usage terms and usage metering for the user's ArcGIS account.
+- Start conservatively: request only visible tiles and use a bounded in-memory cache unless the current service terms explicitly allow more. Do not promise offline maps or persist Esri tiles without confirming permission.
+- ArcGIS API-key credentials are BYOK and memory-only by default. Desktop users may explicitly opt in to storing the key in their current OS user's credential store; web builds remain session-only. The World Imagery MapServer endpoint uses Esri's documented `token` query parameter; the Static Basemap Tiles label endpoint uses an `Authorization: Bearer` header. The key needs both `premium:user:basemaps` for World Imagery and `premium:user:staticbasemaptiles` for labels. Never store the key in the drawing, UI preference JSON, logs, source control, or export. Explain that service usage may be billed to the account that owns the credential.
 
 - Show required attribution whenever map pixels are visible.
 - Respect provider rate limits, attribution, API key/billing, storage, and display requirements.
@@ -84,7 +88,7 @@ Before coding, record an ADR for per-drawing persistence. Prefer a non-entity do
 1. In a local checkout, read the private `plan/` status/execution/architecture files named above and the geometry-library ADR.
 2. Trace `CanvasState`, `Xf`, canvas painter ordering, `CadApp::Services`, preference loading, and native/web app initialization.
 3. Write ADRs for coordinate-transform dependency and georeference persistence. Validate native + wasm builds before committing to a dependency.
-4. Confirm a street tile source and a licensed satellite candidate, with attribution and cache rules. Do not hard-code an unapproved endpoint.
+4. Confirm a street tile source and licensed satellite candidates (Google hybrid and optional Esri current World Imagery via WMTS), with attribution and cache rules. Do not hard-code an unapproved endpoint.
 
 **Exit:** dependency layering, metadata location, provider terms, and offline/error behavior are decided.
 
@@ -114,6 +118,7 @@ Before coding, record an ADR for per-drawing persistence. Prefer a non-entity do
 2. Implement Google hybrid mode through Map Tiles API session tokens (`satellite` map type, `layerRoadmap`, `overlay: false`), requesting only visible tiles and viewport copyright metadata. Show the Google Maps mark/text plus the full copyright returned for the current viewport.
 3. Keep Google imagery in a bounded memory-only texture cache; do not prefetch, create an offline cache, or persist tile bytes. Keep OSM cache policy independent.
 4. BYOK keys are user-supplied and kept in process memory by default. Desktop users may explicitly opt in to saving the key in their current OS user's credential store (Windows Credential Manager, macOS Keychain, or Secret Service on supported Linux/BSD desktops). Never serialize keys or session tokens into drawings, profile JSON, logs, source control, or exports. Web builds remain session-only. Warn that Google bills tile requests and that users should restrict the key to Map Tiles API.
+5. Implement Esri current World Imagery with labels as a separate satellite mode: request the World Imagery raster base and the Static Basemap Tiles `arcgis/imagery/labels` overlay for visible tiles, using the user's ArcGIS access token. Keep both layers in bounded memory-only caches, show their Esri/data attributions, and never bundle or persist imagery. No Wayback catalog or date selector is involved.
 
 **Exit:** provider terms are met, failures are contained, and the selected sources work on supported platforms.
 
@@ -130,13 +135,13 @@ Available separately from CRS selection through `MAP.GEOREF.ALIGN` / View > Map 
 
 ## 5. Acceptance criteria
 
-- Off/Street/Satellite mode and opacity behave predictably; attribution remains legible over the map.
+- Off/Street/Google Satellite/Esri Satellite-with-Labels modes and opacity behave predictably; each source's attribution remains legible over the map. Esri uses current World Imagery and does not expose Wayback historical imagery/date selection.
 - A map is always behind CAD geometry and does not participate in CAD editing, snapping, selection, measurement, or undo.
 - Map and drawing remain spatially registered through pan, zoom, window zoom, and viewport resize.
 - CRS is explicit; unknown CRS never produces a silently misleading overlay. For an already-correct MGA drawing, selecting the zone uses its coordinates unchanged and never assumes `(0,0)` is the origin. Optional anchor alignment updates only map registration and is validated independently from CRS-only selection. Every offered MGA CRS has transform coverage, including known-point and round-trip coverage for GDA2020 / MGA zone 55 (EPSG:7855).
 - Map failures, missing network, invalid provider response, and bad saved metadata do not crash or corrupt the drawing.
 - Saving/reopening preserves all CAD entities and unknown file content; map metadata follows the agreed persistence model.
-- Provider attribution and API/storage/rate-limit rules are respected; cache behavior is source-specific. Google satellite requests use a current Map Tiles API session and viewport copyright metadata, with no persistent tile cache.
+- Provider attribution and API/storage/rate-limit rules are respected; cache behavior is source-specific. Google satellite requests use a current Map Tiles API session and viewport copyright metadata. Esri requests use an ArcGIS access token and render its imagery + labels layers without persistent tile storage.
 - Native and wasm checks pass; no UI dependency leaks below `ui-egui` and no network dependency leaks into geometry/rendering.
 - CAD-only export remains unchanged unless a future explicit “include map” export is designed and provider terms permit it.
 
@@ -147,7 +152,7 @@ Available separately from CRS selection through `MAP.GEOREF.ALIGN` / View > Map 
 | Coordinate transform crate | Accuracy, platform packaging, wasm support, and licence | Phase 0 ADR and native/wasm spike |
 | Per-drawing metadata format | DXF round-trip safety and project portability | Phase 0 ADR; no entity changes |
 | Street tile source | Attribution, rate limits, reliability, cache policy | Select source before production requests |
-| Satellite source | Commercial/internal-use licensing and cost | Separate selection and terms review |
+| Satellite source | Commercial/internal-use licensing, attribution, access, and cost | Separate selection and terms review; Esri World Imagery use remains conditional on current terms validation |
 | Performance | Image decoding, network latency, large canvases | Async loading, bounded cache, cancellation, profiling |
 | Drawing intent | CAD units alone do not establish location or CRS | Require explicit CRS selection; keep coordinate alignment opt-in and separate |
 

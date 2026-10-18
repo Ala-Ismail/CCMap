@@ -100,7 +100,7 @@ numbers):
 | Area | Status |
 |---|---|
 | Drawing area | Model space with adaptive grid, axes, pan/zoom (wheel, middle-drag, pinch), crosshair cursor with pickbox, UCS icon, ViewCube, viewport label |
-| Map backgrounds | View-only OpenStreetMap street tiles and Google satellite/hybrid imagery; CRS-aware alignment for WGS 84, Web Mercator, GDA2020 and GDA94 MGA; optional map-only anchor alignment |
+| Map backgrounds | View-only OpenStreetMap streets, Google satellite/hybrid imagery, and Esri World Imagery with labels; CRS-aware alignment for WGS 84, Web Mercator, GDA2020 and GDA94 MGA; optional map-only anchor alignment |
 | Command line | Prompts with keywords, history, AutoComplete, aliases, `@dx,dy`, `@d<a`, `#x,y`, direct distance entry, Enter/space/right-click to repeat, transparent commands, `.scr`-style scripts |
 | Draw | LINE, PLINE (arcs, widths), CIRCLE (center/radius/diameter, 2P, 3P), ARC, RECTANG (fillet/chamfer), POLYGON, ELLIPSE (+arcs), SPLINE, POINT, XLINE, RAY, DONUT, TEXT, MTEXT |
 | Modify | ERASE, MOVE, COPY, ROTATE, SCALE, MIRROR, STRETCH, OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK, JOIN, EXPLODE, rectangular/polar ARRAY, draw order, OVERKILL |
@@ -118,7 +118,7 @@ numbers):
 ## Map backgrounds
 
 In the desktop app, use **View → Map** to turn the map off, show OpenStreetMap streets, choose an
-MGA coordinate reference system, adjust map opacity, or configure Google Maps. The map is a visual
+MGA coordinate reference system, adjust map opacity, or configure Google Maps or Esri. The map is a visual
 background only: it does not become drawing geometry, affect snapping or selection, or appear in
 normal DXF/DWG, PDF, SVG, or PNG drawing exports.
 
@@ -143,6 +143,15 @@ builds keep it only for the session. The key and temporary Google session token 
 the repository, drawing, or map-registration sidecar. The sidecar (`<drawing>.cadcraft-map.json`)
 stores only georeference information. OSM tiles follow the provider's cache headers; Google imagery
 is kept in memory only and is not saved for offline use.
+
+Configure the key through **View → Map → Configure Esri API Key**. Esri mode uses current World
+Imagery tiles with the `arcgis/imagery/labels` layer composited above them. It requires your own
+ArcGIS Location Platform API key with both **Basemaps** and **Static Basemap Tiles** privileges;
+usage may be billed to the ArcGIS account. CADCraft shows Esri and imagery/label
+source attributions. The Esri key is kept in memory by default; on supported desktop systems,
+you can opt in to storing it in your OS credential store. The imagery endpoint uses Esri's `token`
+parameter, and the label endpoint uses a Bearer authorization header. CADCraft never saves it to preferences,
+drawings, logs, or the repository. Esri tile images are not persisted for offline use.
 
 ## Quick start
 

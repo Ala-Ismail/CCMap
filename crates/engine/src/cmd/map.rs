@@ -8,7 +8,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("map.mode", "Map Mode", mode).params("{mode: off|street|satellite}").noundo(),
+        CommandSpec::new("map.mode", "Map Mode", mode).params("{mode: off|street|satellite|esri-satellite}").noundo(),
         CommandSpec::new("map.opacity", "Map Opacity", opacity).params("{opacity: 0..1}").noundo(),
         CommandSpec::new("map.georef.set", "Set Map Georeference", georef_set)
             .params("{crs, drawingAnchor?:[x,y], projectAnchor?:[x,y], scale?, rotation?}; omit anchors to preserve drawing coordinates")
@@ -45,7 +45,8 @@ fn mode(s: &mut Session, p: &Value) -> Result<Value> {
         Some("off") => MapMode::Off,
         Some("street") => MapMode::Street,
         Some("satellite") => MapMode::Satellite,
-        _ => return Err(bad("map.mode", "`mode` must be `off`, `street`, or `satellite`")),
+        Some("esri-satellite") => MapMode::EsriSatellite,
+        _ => return Err(bad("map.mode", "`mode` must be `off`, `street`, `satellite`, or `esri-satellite`")),
     };
     s.state_mut()?.map.mode = mode;
     s.touch();
@@ -297,11 +298,12 @@ fn georef_clear(s: &mut Session, _: &Value) -> Result<Value> {
 fn status(s: &mut Session, _: &Value) -> Result<Value> {
     let map = s.state()?.map;
     Ok(json!({
-        "mode": match map.mode { MapMode::Off => "off", MapMode::Street => "street", MapMode::Satellite => "satellite" },
+        "mode": match map.mode { MapMode::Off => "off", MapMode::Street => "street", MapMode::Satellite => "satellite", MapMode::EsriSatellite => "esri-satellite" },
         "opacity": map.opacity,
         "provider": match map.mode {
             MapMode::Street => Some("openstreetmap-standard"),
             MapMode::Satellite => Some("google-maps-satellite"),
+            MapMode::EsriSatellite => Some("esri-world-imagery-with-labels"),
             MapMode::Off => None,
         },
         "registered": map.registration.is_some(),
@@ -358,6 +360,12 @@ mod tests {
             Err(error) => unreachable!("satellite mode is a valid provider selection: {error}"),
         };
         assert_eq!(satellite["provider"], "google-maps-satellite");
+        let esri = match session.execute("map.mode", &json!({"mode":"esri-satellite"})) {
+            Ok(value) => value,
+            Err(error) => unreachable!("Esri satellite mode is a valid provider selection: {error}"),
+        };
+        assert_eq!(esri["mode"], "esri-satellite");
+        assert_eq!(esri["provider"], "esri-world-imagery-with-labels");
         let state = match session.state() {
             Ok(state) => state,
             Err(error) => unreachable!("session state exists: {error}"),

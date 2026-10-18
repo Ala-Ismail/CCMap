@@ -1625,7 +1625,15 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         None => {
             blockedit::wash(app, &painter, rect);
-            map_status = crate::map::paint_background(&app.session, &mut app.map_tiles, &mut app.google_map_tiles, &painter, &xf, rect);
+            map_status = crate::map::paint_background(
+                &app.session,
+                &mut app.map_tiles,
+                &mut app.google_map_tiles,
+                &mut app.esri_map_tiles,
+                &painter,
+                &xf,
+                rect,
+            );
             draw_grid(app, &painter, &xf);
             Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b())
         }
@@ -1842,6 +1850,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     viewport_label(&painter, rect);
     let google_diagnostic =
         app.session.state().ok().filter(|state| state.map.mode == cadcraft_map::MapMode::Satellite).map(|_| app.google_map_tiles.diagnostic());
+    let esri_diagnostic =
+        app.session.state().ok().filter(|state| state.map.mode == cadcraft_map::MapMode::EsriSatellite).map(|_| app.esri_map_tiles.diagnostic());
+    let esri_attribution = app.esri_map_tiles.attribution();
     crate::map::paint_overlay(
         &painter,
         rect,
@@ -1849,6 +1860,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.google_map_tiles.attribution(),
         app.google_map_tiles.request_status(),
         google_diagnostic.as_deref(),
+        Some(&esri_attribution),
+        app.esri_map_tiles.request_status(),
+        esri_diagnostic.as_deref(),
     );
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());

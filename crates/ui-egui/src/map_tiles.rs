@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use cadcraft_map::{GoogleMapsSatellite, OpenStreetMapStandard, TileBounds, TileId, TileProvider, Zoom};
+use cadcraft_map::{EsriWorldImagery, GoogleMapsSatellite, OpenStreetMapStandard, TileBounds, TileId, TileProvider, Zoom};
 use egui::{ColorImage, Context, TextureHandle, TextureOptions};
 
 const MAX_REQUESTS: usize = 4;
@@ -274,11 +274,8 @@ const GOOGLE_RETRY_DELAY: Duration = Duration::from_secs(30);
     any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
 ))]
 const GOOGLE_KEYRING_SERVICE: &str = "CADCraft";
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
-))]
 const GOOGLE_KEYRING_USER: &str = "Google Maps Platform API key";
+const ESRI_KEYRING_USER: &str = "ArcGIS Location Platform API key";
 
 enum GoogleCompleted {
     Session(u64, ehttp::Result<ehttp::Response>),
@@ -373,7 +370,7 @@ impl GoogleTileCache {
 
     /// Load a previously opted-in key from the current OS user's credential store.
     pub fn load_remembered_key(&mut self) -> Result<bool, &'static str> {
-        let Some(key) = read_saved_google_key()? else {
+        let Some(key) = read_saved_key(GOOGLE_KEYRING_USER)? else {
             self.key_remembered = false;
             return Ok(false);
         };
@@ -396,14 +393,14 @@ impl GoogleTileCache {
     /// Persist the current runtime key in the per-user OS credential store.
     pub fn remember_current_key(&mut self) -> Result<(), &'static str> {
         let key = self.api_key.as_deref().ok_or("Enter a Google Maps API key first")?;
-        write_saved_google_key(key)?;
+        write_saved_key(GOOGLE_KEYRING_USER, key)?;
         self.key_remembered = true;
         Ok(())
     }
 
     /// Remove the per-user OS credential without affecting the active in-memory key.
     pub fn forget_remembered_key(&mut self) -> Result<(), &'static str> {
-        delete_saved_google_key()?;
+        delete_saved_key(GOOGLE_KEYRING_USER)?;
         self.key_remembered = false;
         Ok(())
     }
@@ -668,16 +665,309 @@ impl GoogleTileCache {
     }
 }
 
+// Esri's documented composition is the World Imagery raster service beneath the imagery-label
+// raster tiles from Static Basemap Tiles. Both stay memory-only and use the same XYZ footprint.
+const ESRI_IMAGERY_ATTRIBUTION: &str = "Powered by Esri · Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community";
+const ESRI_LABEL_ATTRIBUTION: &str = "Labels: Esri, TomTom, Garmin, FAO, NOAA, USGS, © OpenStreetMap contributors, and the GIS User Community";
+const ESRI_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum EsriLayer {
+    Imagery,
+    Labels,
+}
+
+enum EsriCompleted {
+    Tile(TileId, EsriLayer, ehttp::Result<ehttp::Response>),
+}
+
+struct EsriEntry {
+    imagery: Option<TextureHandle>,
+    labels: Option<TextureHandle>,
+    used: u64,
+}
+
+pub struct EsriTileCache {
+    api_key: Option<String>,
+    key_remembered: bool,
+    entries: HashMap<TileId, EsriEntry>,
+    queued: VecDeque<(TileId, EsriLayer)>,
+    pending: HashSet<(TileId, EsriLayer)>,
+    failed: HashMap<(TileId, EsriLayer), Instant>,
+    tx: Sender<EsriCompleted>,
+    rx: Receiver<EsriCompleted>,
+    frame: u64,
+    visible_count: usize,
+    requests_this_session: u64,
+    tiles_loaded_this_session: u64,
+    error: Option<String>,
+}
+
+impl Default for EsriTileCache {
+    fn default() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            api_key: None,
+            key_remembered: false,
+            entries: HashMap::new(),
+            queued: VecDeque::new(),
+            pending: HashSet::new(),
+            failed: HashMap::new(),
+            tx,
+            rx,
+            frame: 0,
+            visible_count: 0,
+            requests_this_session: 0,
+            tiles_loaded_this_session: 0,
+            error: None,
+        }
+    }
+}
+
+impl EsriTileCache {
+    pub fn set_api_key(&mut self, key: Option<String>) -> Result<(), String> {
+        let key = key.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
+        if let Some(value) = key.as_deref() {
+            EsriWorldImagery::new(value).map_err(|_| "ArcGIS API key contains unsupported characters".to_owned())?;
+        }
+        if key == self.api_key {
+            return Ok(());
+        }
+        self.api_key = key;
+        self.entries.clear();
+        self.queued.clear();
+        self.pending.clear();
+        self.failed.clear();
+        self.visible_count = 0;
+        self.requests_this_session = 0;
+        self.tiles_loaded_this_session = 0;
+        self.error = None;
+        Ok(())
+    }
+
+    /// Restore a key explicitly saved in this OS user's credential store.
+    pub fn load_remembered_key(&mut self) -> Result<bool, &'static str> {
+        let Some(key) = read_saved_key(ESRI_KEYRING_USER)? else {
+            self.key_remembered = false;
+            return Ok(false);
+        };
+        self.set_api_key(Some(key)).map_err(|_| "The saved ArcGIS key is invalid")?;
+        self.key_remembered = true;
+        Ok(true)
+    }
+
+    pub fn key_is_remembered(&self) -> bool {
+        self.key_remembered
+    }
+
+    pub fn remember_current_key(&mut self) -> Result<(), &'static str> {
+        let key = self.api_key.as_deref().ok_or("Enter an ArcGIS API key first")?;
+        write_saved_key(ESRI_KEYRING_USER, key)?;
+        self.key_remembered = true;
+        Ok(())
+    }
+
+    pub fn forget_remembered_key(&mut self) -> Result<(), &'static str> {
+        delete_saved_key(ESRI_KEYRING_USER)?;
+        self.key_remembered = false;
+        Ok(())
+    }
+
+    pub fn can_remember_key() -> bool {
+        GoogleTileCache::can_remember_key()
+    }
+
+    pub fn has_api_key(&self) -> bool {
+        self.api_key.is_some()
+    }
+
+    pub fn attribution(&self) -> String {
+        format!("{ESRI_IMAGERY_ATTRIBUTION} · {ESRI_LABEL_ATTRIBUTION}")
+    }
+
+    pub fn has_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub fn has_complete_tile(&self, id: TileId) -> bool {
+        self.entries.get(&id).is_some_and(|entry| entry.imagery.is_some() && entry.labels.is_some())
+    }
+
+    pub fn request_status(&self) -> &'static str {
+        if !self.pending.is_empty() { "Esri · downloading imagery and labels" } else { "Esri · waiting for imagery and labels" }
+    }
+
+    pub fn diagnostic(&self) -> String {
+        let status = self.error.as_deref().unwrap_or(if self.api_key.is_none() {
+            "API key required"
+        } else if !self.pending.is_empty() {
+            "Downloading tiles"
+        } else {
+            "Ready"
+        });
+        format!(
+            "Status: {status}\nCurrent tiles: {} visible, {} loaded, {} pending, {} queued, {} failed\nSession total: {} requests, {} tiles loaded",
+            self.visible_count,
+            self.entries.values().filter(|entry| entry.imagery.is_some() && entry.labels.is_some()).count(),
+            self.pending.len(),
+            self.queued.len(),
+            self.failed.len(),
+            self.requests_this_session,
+            self.tiles_loaded_this_session,
+        )
+    }
+
+    pub fn begin_frame(&mut self, ctx: &Context) {
+        self.frame = self.frame.wrapping_add(1);
+        while let Ok(EsriCompleted::Tile(id, layer, result)) = self.rx.try_recv() {
+            self.pending.remove(&(id, layer));
+            match result {
+                Ok(response) if response.ok && response.bytes.len() <= MAX_TILE_BYTES => {
+                    if let Some(texture) = decode_esri_texture(ctx, id, layer, &response.bytes) {
+                        let entry = self.entries.entry(id).or_insert(EsriEntry { imagery: None, labels: None, used: self.frame });
+                        entry.used = self.frame;
+                        match layer {
+                            EsriLayer::Imagery => entry.imagery = Some(texture),
+                            EsriLayer::Labels => entry.labels = Some(texture),
+                        }
+                        self.failed.remove(&(id, layer));
+                        if entry.imagery.is_some() && entry.labels.is_some() {
+                            self.tiles_loaded_this_session = self.tiles_loaded_this_session.saturating_add(1);
+                        }
+                    } else {
+                        self.failed.insert((id, layer), Instant::now());
+                        self.error = Some(esri_non_image_response(layer, &response));
+                    }
+                }
+                Ok(response) => {
+                    self.failed.insert((id, layer), Instant::now());
+                    self.error = Some(format!("Esri {} tile request failed (HTTP {}).", esri_layer_name(layer), response.status));
+                }
+                Err(_) => {
+                    self.failed.insert((id, layer), Instant::now());
+                    self.error = Some(format!("Esri {} tile request failed before an HTTP response.", esri_layer_name(layer)));
+                }
+            }
+        }
+        if self.entries.len() > MAX_TEXTURES {
+            let mut by_age: Vec<_> = self.entries.iter().map(|(id, entry)| (*id, entry.used)).collect();
+            by_age.sort_unstable_by_key(|(_, used)| *used);
+            for (id, _) in by_age.into_iter().take(self.entries.len() - MAX_TEXTURES) {
+                self.entries.remove(&id);
+            }
+        }
+        self.failed.retain(|_, at| at.elapsed() < ESRI_RETRY_DELAY);
+    }
+
+    pub fn textures(&mut self, id: TileId) -> (Option<TextureHandle>, Option<TextureHandle>) {
+        let entry = self.entries.entry(id).or_insert(EsriEntry { imagery: None, labels: None, used: self.frame });
+        entry.used = self.frame;
+        (entry.imagery.clone(), entry.labels.clone())
+    }
+
+    pub fn request_visible(&mut self, ctx: &Context, visible: &HashSet<TileId>) {
+        self.visible_count = visible.len();
+        self.queued.retain(|(id, _)| visible.contains(id));
+        let Some(key) = self.api_key.as_deref() else { return };
+        let Ok(provider) = EsriWorldImagery::new(key) else { return };
+        for id in visible {
+            for layer in [EsriLayer::Imagery, EsriLayer::Labels] {
+                let already_loaded = self.entries.get(id).is_some_and(|entry| match layer {
+                    EsriLayer::Imagery => entry.imagery.is_some(),
+                    EsriLayer::Labels => entry.labels.is_some(),
+                });
+                let request_id = (*id, layer);
+                if !already_loaded
+                    && !self.pending.contains(&request_id)
+                    && !self.queued.contains(&request_id)
+                    && !self.failed.contains_key(&request_id)
+                    && self.queued.len() < 512
+                {
+                    self.queued.push_back(request_id);
+                }
+            }
+        }
+        while self.pending.len() < MAX_REQUESTS {
+            let Some((id, layer)) = self.queued.pop_front() else { break };
+            if !visible.contains(&id) || !self.pending.insert((id, layer)) {
+                continue;
+            }
+            let url = match layer {
+                EsriLayer::Imagery => provider.imagery_tile_url(id),
+                EsriLayer::Labels => provider.labels_tile_url(id),
+            };
+            let Ok(url) = url else {
+                self.pending.remove(&(id, layer));
+                self.failed.insert((id, layer), Instant::now());
+                continue;
+            };
+            let request = ehttp::Request::get(url).with_timeout(Some(Duration::from_secs(20)));
+            let request = if layer == EsriLayer::Labels {
+                let authorization = format!("Bearer {key}");
+                request.with_header("Authorization", &authorization)
+            } else {
+                request
+            };
+            self.requests_this_session = self.requests_this_session.saturating_add(1);
+            let tx = self.tx.clone();
+            let ctx = ctx.clone();
+            ehttp::fetch(request, move |result| {
+                let _ = tx.send(EsriCompleted::Tile(id, layer, result));
+                ctx.request_repaint();
+            });
+        }
+    }
+}
+
+fn esri_layer_name(layer: EsriLayer) -> &'static str {
+    match layer {
+        EsriLayer::Imagery => "imagery",
+        EsriLayer::Labels => "label",
+    }
+}
+
+fn esri_non_image_response(layer: EsriLayer, response: &ehttp::Response) -> String {
+    let code = serde_json::from_slice::<serde_json::Value>(&response.bytes)
+        .ok()
+        .and_then(|body| body.pointer("/error/code").and_then(serde_json::Value::as_u64));
+    if let Some(code) = code {
+        let detail = match code {
+            498 => "API key invalid or expired",
+            499 => "token missing or not accepted by this endpoint",
+            403 => "check API key privileges",
+            _ => "check API key and service access",
+        };
+        return format!("Esri {} returned ArcGIS error {code}: {detail}.", esri_layer_name(layer));
+    }
+    let content_type = response.headers.get("content-type").and_then(|value| value.split(';').next()).unwrap_or("unknown content type");
+    format!("Esri {} response was not an image (HTTP {}, {content_type}).", esri_layer_name(layer), response.status)
+}
+
+fn decode_esri_texture(ctx: &Context, id: TileId, layer: EsriLayer, bytes: &[u8]) -> Option<TextureHandle> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let (width, height) = reader.into_dimensions().ok()?;
+    if !(256..=512).contains(&width) || !(256..=512).contains(&height) {
+        return None;
+    }
+    let rgba = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let pixels = ColorImage::from_rgba_unmultiplied([width as usize, height as usize], rgba.as_raw());
+    let name = match layer {
+        EsriLayer::Imagery => "imagery",
+        EsriLayer::Labels => "labels",
+    };
+    Some(ctx.load_texture(format!("esri-{name}-{}-{}-{}", id.zoom().value(), id.x(), id.y()), pixels, TextureOptions::LINEAR))
+}
+
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
 ))]
-fn read_saved_google_key() -> Result<Option<String>, &'static str> {
-    let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, GOOGLE_KEYRING_USER).map_err(|_| "Could not access the OS credential store")?;
+fn read_saved_key(user: &str) -> Result<Option<String>, &'static str> {
+    let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, user).map_err(|_| "Could not access the OS credential store")?;
     match entry.get_password() {
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err("Could not read the saved Google Maps key from the OS credential store"),
+        Err(_) => Err("Could not read the saved map-provider key from the OS credential store"),
     }
 }
 
@@ -685,7 +975,7 @@ fn read_saved_google_key() -> Result<Option<String>, &'static str> {
     not(target_arch = "wasm32"),
     any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
 )))]
-fn read_saved_google_key() -> Result<Option<String>, &'static str> {
+fn read_saved_key(_user: &str) -> Result<Option<String>, &'static str> {
     Ok(None)
 }
 
@@ -693,8 +983,8 @@ fn read_saved_google_key() -> Result<Option<String>, &'static str> {
     not(target_arch = "wasm32"),
     any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
 ))]
-fn write_saved_google_key(key: &str) -> Result<(), &'static str> {
-    let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, GOOGLE_KEYRING_USER).map_err(|_| "Could not access the OS credential store")?;
+fn write_saved_key(user: &str, key: &str) -> Result<(), &'static str> {
+    let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, user).map_err(|_| "Could not access the OS credential store")?;
     entry.set_password(key).map_err(|_| "Could not save the key in the OS credential store")
 }
 
@@ -702,7 +992,7 @@ fn write_saved_google_key(key: &str) -> Result<(), &'static str> {
     not(target_arch = "wasm32"),
     any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
 )))]
-fn write_saved_google_key(_key: &str) -> Result<(), &'static str> {
+fn write_saved_key(_user: &str, _key: &str) -> Result<(), &'static str> {
     Err("Remembering keys is unavailable on this platform")
 }
 
@@ -710,8 +1000,8 @@ fn write_saved_google_key(_key: &str) -> Result<(), &'static str> {
     not(target_arch = "wasm32"),
     any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
 ))]
-fn delete_saved_google_key() -> Result<(), &'static str> {
-    let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, GOOGLE_KEYRING_USER).map_err(|_| "Could not access the OS credential store")?;
+fn delete_saved_key(user: &str) -> Result<(), &'static str> {
+    let entry = keyring::Entry::new(GOOGLE_KEYRING_SERVICE, user).map_err(|_| "Could not access the OS credential store")?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(_) => Err("Could not remove the saved key from the OS credential store"),
@@ -722,7 +1012,7 @@ fn delete_saved_google_key() -> Result<(), &'static str> {
     not(target_arch = "wasm32"),
     any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")
 )))]
-fn delete_saved_google_key() -> Result<(), &'static str> {
+fn delete_saved_key(_user: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
@@ -834,5 +1124,55 @@ mod google_tests {
         assert_eq!(body["mapType"], "satellite");
         assert_eq!(body["layerTypes"][0], "layerRoadmap");
         assert_eq!(body["overlay"], false);
+    }
+}
+
+#[cfg(test)]
+mod esri_tests {
+    use super::*;
+
+    fn esri_response(content_type: &str, bytes: &[u8]) -> ehttp::Response {
+        ehttp::Response {
+            url: "https://static-map-tiles-api.arcgis.com/tile".to_owned(),
+            ok: true,
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: ehttp::Headers::new(&[("content-type", content_type)]),
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    #[test]
+    fn esri_diagnostic_reports_current_and_session_tile_statistics_in_three_lines() {
+        let mut cache = EsriTileCache::default();
+        assert_eq!(cache.diagnostic().lines().count(), 3);
+        assert!(cache.diagnostic().contains("Session total: 0 requests, 0 tiles loaded"));
+
+        // Esri fetches imagery and its transparent label overlay as separate requests.
+        cache.visible_count = 20;
+        cache.requests_this_session = 136;
+        cache.tiles_loaded_this_session = 68;
+        let diagnostic = cache.diagnostic();
+        assert!(diagnostic.contains("Current tiles: 20 visible"));
+        assert!(diagnostic.contains("Session total: 136 requests, 68 tiles loaded"));
+        assert_eq!(diagnostic.lines().count(), 3);
+    }
+
+    #[test]
+    fn esri_non_image_diagnostics_report_arcgis_error_code_without_response_body() {
+        let response = esri_response("application/json; charset=utf-8", br#"{"error":{"code":403,"message":"denied"}}"#);
+        let diagnostic = esri_non_image_response(EsriLayer::Labels, &response);
+        assert_eq!(diagnostic, "Esri label returned ArcGIS error 403: check API key privileges.");
+        assert!(!diagnostic.contains("denied"));
+
+        let response = esri_response("application/json", br#"{"error":{"code":499}}"#);
+        assert_eq!(
+            esri_non_image_response(EsriLayer::Imagery, &response),
+            "Esri imagery returned ArcGIS error 499: token missing or not accepted by this endpoint."
+        );
+
+        let response = esri_response("text/html", b"not an image");
+        let diagnostic = esri_non_image_response(EsriLayer::Imagery, &response);
+        assert_eq!(diagnostic, "Esri imagery response was not an image (HTTP 200, text/html).");
     }
 }
