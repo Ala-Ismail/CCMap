@@ -100,6 +100,7 @@ numbers):
 | Area | Status |
 |---|---|
 | Drawing area | Model space with adaptive grid, axes, pan/zoom (wheel, middle-drag, pinch), crosshair cursor with pickbox, UCS icon, ViewCube, viewport label |
+| Map backgrounds | View-only OpenStreetMap street tiles and Google satellite/hybrid imagery; CRS-aware alignment for WGS 84, Web Mercator, GDA2020 and GDA94 MGA; optional map-only anchor alignment |
 | Command line | Prompts with keywords, history, AutoComplete, aliases, `@dx,dy`, `@d<a`, `#x,y`, direct distance entry, Enter/space/right-click to repeat, transparent commands, `.scr`-style scripts |
 | Draw | LINE, PLINE (arcs, widths), CIRCLE (center/radius/diameter, 2P, 3P), ARC, RECTANG (fillet/chamfer), POLYGON, ELLIPSE (+arcs), SPLINE, POINT, XLINE, RAY, DONUT, TEXT, MTEXT |
 | Modify | ERASE, MOVE, COPY, ROTATE, SCALE, MIRROR, STRETCH, OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK, JOIN, EXPLODE, rectangular/polar ARRAY, draw order, OVERKILL |
@@ -113,6 +114,35 @@ numbers):
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
 | Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska) and Arabic (العربية, with an installed Arabic font), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
+
+## Map backgrounds
+
+In the desktop app, use **View → Map** to turn the map off, show OpenStreetMap streets, choose an
+MGA coordinate reference system, adjust map opacity, or configure Google Maps. The map is a visual
+background only: it does not become drawing geometry, affect snapping or selection, or appear in
+normal DXF/DWG, PDF, SVG, or PNG drawing exports.
+
+For a survey drawing that already uses the correct MGA coordinates, select its CRS under **View →
+Map → Set Map CRS**. The selector offers GDA2020 / MGA zones 46–56 (EPSG:7846–7856) and GDA94 / MGA
+zones 46–56 (EPSG:28346–28356); the `MAP.GEOREF.SET` command also accepts WGS 84 and Web Mercator.
+CRS selection does not move or scale the drawing, and CADCraft does not assume that `(0,0)` is a
+survey origin. For drawings that need correction, **View → Map → Align Drawing to Map** optionally
+registers one or two matching points; it changes map registration only, never the drawing entities.
+This is intended for local map alignment, not survey-grade datum transformation.
+
+OpenStreetMap is the street-map source and is shown with its required attribution. Google satellite
+mode uses Google Maps Platform Map Tiles API satellite imagery with Google's roadmap labels
+composited into the tiles. It requires your own Google Maps Platform API key, the Map Tiles API
+enabled in your Google Cloud project, and billing configured. Restrict the key to the Map Tiles API;
+Google may charge for tile requests. CADCraft displays Google's map attribution and viewport
+copyright information while the imagery is shown.
+
+Enter the key through **View → Map → Configure Google Maps API Key**. It is kept in memory by default.
+On supported desktop systems, you can opt in to remembering it in your OS credential store; web
+builds keep it only for the session. The key and temporary Google session token are not written to
+the repository, drawing, or map-registration sidecar. The sidecar (`<drawing>.cadcraft-map.json`)
+stores only georeference information. OSM tiles follow the provider's cache headers; Google imagery
+is kept in memory only and is not saved for offline use.
 
 ## Quick start
 
