@@ -393,6 +393,27 @@ mod tests {
     }
 
     #[test]
+    fn map_state_and_alignment_do_not_change_the_drawing_or_dxf_export() {
+        let mut session = Session::new();
+        assert!(session.execute("line", &json!({"points":[[10,20],[30,40]]})).is_ok());
+        let before = match session.doc() {
+            Ok(document) => cadcraft_io::write_dxf(document),
+            Err(error) => unreachable!("a new session has a drawing: {error}"),
+        };
+
+        assert!(session.execute("map.georef.set", &json!({"crs":"EPSG:7855"})).is_ok());
+        assert!(session.execute("map.mode", &json!({"mode":"street"})).is_ok());
+        assert!(session.execute("map.opacity", &json!({"opacity":0.4})).is_ok());
+        assert!(session.execute("map.georef.align", &json!({"drawingAnchor":[10,20], "latLongAnchor":[-37.8,144.9]})).is_ok());
+
+        let after = match session.doc() {
+            Ok(document) => cadcraft_io::write_dxf(document),
+            Err(error) => unreachable!("map commands keep the drawing available: {error}"),
+        };
+        assert_eq!(after, before, "map state must not enter CAD drawing data or its ordinary DXF export");
+    }
+
+    #[test]
     fn latitude_longitude_anchor_is_converted_to_selected_crs() {
         let mut session = Session::new();
         assert!(session.execute("map.georef.set", &json!({"crs":"EPSG:7855"})).is_ok());

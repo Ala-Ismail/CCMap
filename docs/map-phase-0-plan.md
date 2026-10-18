@@ -1,6 +1,6 @@
 # Map integration: Phase 0 implementation plan
 
-**Status:** Phase 1 OpenStreetMap tile transport and desktop sidecars integrated; web sidecar import/export remains future work
+**Status:** Native OSM and Google hybrid backdrops implemented; CAD-export isolation and native/WASM/layer checks verified 2026-10-18. Browser-host sidecar import/export remains future work.
 **Date:** 2026-10-18
 
 This turns the design in the local `map-integration.md` into an implementation sequence. It adds a
@@ -72,11 +72,11 @@ preference serialization owns the default mode and opacity; the sidecar owns onl
    a bounded decoded image cache. Compose tiles using `Xf` underneath grid/CAD content, draw
    attribution, loading, georeference-required, and error states. Verify no map primitives reach a
    `DisplayList` or `cadcraft-render` export.
-5. **Transport and provider activation — native/WASM implementation in verification.** Implement the OpenStreetMap Standard adapter with
+5. **Transport and provider activation — implemented and verified 2026-10-18.** Implement the OpenStreetMap Standard adapter with
    queued-request cancellation, request de-duplication, bounded concurrency, conditional requests, and cache
-   header handling at the application boundary. Keep the provider registry configuration-driven
-   so self-hosted or approved hosted OpenStreetMap-derived sources can be added without changing
-   georeferencing or canvas code. Satellite is a separate feature gate.
+   header handling at the application boundary. Google hybrid satellite tiles use a separate
+   memory-only cache and BYOK key/session flow; provider attribution is isolated from OSM. Keep
+   provider policy separate from georeferencing and canvas code.
 
 ## Required verification
 
@@ -96,8 +96,9 @@ preference serialization owns the default mode and opacity; the sidecar owns onl
 - [x] The map state can be driven through commands and UI without dialogs in programmatic calls.
 - [x] The sidecar is optional, bounded, versioned, and has failure-path tests.
 - [x] A mock tile is correctly registered while CAD pan/zoom changes.
-- [ ] CAD drawing contents and ordinary export are unchanged.
-- [ ] Native/WASM/layer checks pass.
+- [x] CAD drawing contents and ordinary DXF export are unchanged when map mode, opacity, and
+  registration change (`map_state_and_alignment_do_not_change_the_drawing_or_dxf_export`).
+- [x] Native/WASM/layer checks pass (`cargo xtask ci`, 2026-10-18).
 
 ## Provider sources
 
