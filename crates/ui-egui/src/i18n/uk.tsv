@@ -1320,6 +1320,7 @@
 	Map Status	Стан карти
 	Opacity	Непрозорість
 	Set Map Georeference	Задати геоприв'язку карти
+	Set Map CRS...	Вибрати систему координат карти...
 	Clear Map Georeference	Очистити геоприв'язку карти
 	Street (OpenStreetMap)	Вулична карта (OpenStreetMap)
 	25%	25%

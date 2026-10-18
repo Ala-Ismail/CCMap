@@ -204,6 +204,8 @@ pub struct CadApp {
     pub services: Services,
     pub canvas: canvas::CanvasState,
     map_tiles: map_tiles::TileCache,
+    /// Runtime-only BYOK state; deliberately excluded from `UiState`, profile JSON, and drawings.
+    pub(crate) google_map_tiles: map_tiles::GoogleTileCache,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
     pub cmd: cmdline::CmdLine,
@@ -259,6 +261,7 @@ impl CadApp {
             services,
             canvas: canvas::CanvasState::default(),
             map_tiles: map_tiles::TileCache::default(),
+            google_map_tiles: map_tiles::GoogleTileCache::default(),
             spacemouse: spacemouse::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,
@@ -307,6 +310,12 @@ impl CadApp {
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
         self
+    }
+
+    /// Restore a user-opted-in Google Maps key from the operating-system credential store.
+    /// Desktop hosts call this once at startup; web builds remain session-only.
+    pub fn load_remembered_google_map_key(&mut self) -> Result<bool, &'static str> {
+        self.google_map_tiles.load_remembered_key()
     }
 
     /// Run a command programmatically (or a UI command).

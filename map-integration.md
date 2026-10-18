@@ -14,7 +14,9 @@ Add an optional map backdrop to CADCraft. The map helps place and inspect a draw
 - Pan and zoom keep the map registered to the CAD viewport. A map is never selectable, snappable, measurable, editable, or written as drawing geometry.
 - Do not change DXF entities to implement the background. Preserve current drawing content and save behavior.
 - The project CRS and georeferencing must be explicit. Never assume that arbitrary drawing coordinates are longitude/latitude or a particular projected CRS.
-- Keep map providers replaceable. Street and satellite sources can have different providers and terms.
+- For the common survey-DWG workflow, the drawing already contains coordinates in its correct MGA zone. The user selects/confirms that zone, and CADCraft uses the existing drawing coordinates unchanged: do not assume `(0,0)` is a survey origin and do not apply an origin shift, scale, rotation, or other registration transform.
+- Anchor-based correction/alignment is optional and separate from CRS selection. It is not required for an already-correct MGA survey drawing; users who need it can explicitly align map registration without modifying drawing geometry.
+- Keep map providers replaceable. Street and satellite sources can have different providers and terms. The satellite mode uses Google Maps Platform Map Tiles API hybrid tiles (satellite imagery with Google's roadmap layer composited into each tile) with a user-supplied (BYOK) key; Google tiles are a separate map mode and are not mixed with OpenStreetMap imagery.
 
 This carries forward the earlier LibreCAD discussion: a native CAD canvas overlay, not a consumer map browser embedded as a terms workaround. OpenStreetMap-derived street data and a separately licensed satellite source are viable provider categories. Google Maps would require its supported API, key/billing, attribution, and a terms review; browser embedding does not remove those requirements.
 
@@ -51,13 +53,13 @@ Before implementation, inspect `plan/adr/0001-geometry-libraries.md`, current `p
 
 ### 3.2 Coordinate model
 
-Use an explicit transform chain:
+For an already-correct MGA drawing, use its existing coordinates directly as the project coordinates after the user selects the CRS. No drawing-to-CRS registration transform is applied. For drawings that need correction, the optional anchor-alignment command updates only the map registration, using the transform chain:
 
 `drawing coordinates + drawing units → project CRS → WGS 84 longitude/latitude → tile CRS (normally Web Mercator)`
 
 For Melbourne-area acceptance tests, include **GDA2020 / MGA zone 55 (EPSG:7855)**. Keep CRS and axis-order handling explicit. Use a maintained transform library only after validating its licence, native build requirements, wasm support, and availability under CADCraft's dependency policy. A native-only PROJ dependency is not acceptable if it breaks supported web builds.
 
-A new or existing drawing without a configured CRS must show a clear “georeference required” state; do not guess. The initial georeference workflow should let the user set the CRS and register drawing coordinates to a known map location. More elaborate multi-point fitting can be a later feature.
+A new or existing drawing without a configured CRS must show a clear CRS-required state; do not guess. For survey drawings, the initial workflow should let the user select the correct MGA zone and use its coordinates as-is. The separate anchor workflow is available for drawings that need registration to known map coordinates; more elaborate multi-point fitting remains out of scope.
 
 ### 3.3 Provider interface and policy
 
@@ -98,19 +100,20 @@ Before coding, record an ADR for per-drawing persistence. Prefer a non-entity do
 
 ### Phase 2 — georeference and project persistence
 
-1. Add explicit CRS selection and drawing-to-CRS registration.
-2. Implement and test EPSG:7855 ↔ WGS 84 ↔ tile-CRS transformations using the approved dependency.
-3. Persist georeference metadata via the chosen document metadata or sidecar design.
-4. Test open/save/reopen, missing or invalid metadata, corrupt sidecars, and legacy drawings.
+1. Add explicit CRS selection through a small in-app dialog. The initial Australian catalogue includes GDA2020 / MGA zones 46–56 (EPSG:7846–7856) and GDA94 / MGA zones 46–56 (EPSG:28346–28356), alongside the general WGS 84 and Web Mercator options. Group these by datum and show each zone and EPSG code; never infer the datum or zone from drawing coordinates. For an already-correct MGA survey drawing, selecting the CRS is sufficient: preserve all drawing coordinates unchanged, with no assumed origin or implicit transform.
+2. Provide this dialog through the same `map.georef.set` command used by automation. Keep it focused on CRS selection. Do not include anchor picking, coordinate registration, scale/rotation correction, or other alignment controls in this phase.
+3. Implement and test each offered MGA CRS ↔ WGS 84 ↔ tile-CRS transformation using the approved dependency, including known-point and round-trip coverage for GDA2020 / MGA zone 55 (EPSG:7855).
+4. Persist the selected CRS via the chosen document metadata or sidecar design; CRS-only selection must preserve drawing coordinates unchanged.
+5. Test the dialog and command path, open/save/reopen, missing or invalid CRS metadata, corrupt sidecars, and legacy drawings.
 
-**Exit:** registration survives reopen and file round-trips preserve CAD content.
+**Exit:** selected CRS survives reopen and file round-trips preserve CAD content, with survey coordinates unchanged.
 
 ### Phase 3 — production providers and caching
 
 1. Implement the approved street source and its required attribution.
-2. Add satellite mode only with an approved licensed source and terms review.
-3. Add bounded memory/disk caching, expiry, cancellation, offline indication, and rate limiting based on each source's rules.
-4. Keep API keys out of drawings, logs, source control, and exported files; use supported configuration/secret handling.
+2. Implement Google hybrid mode through Map Tiles API session tokens (`satellite` map type, `layerRoadmap`, `overlay: false`), requesting only visible tiles and viewport copyright metadata. Show the Google Maps mark/text plus the full copyright returned for the current viewport.
+3. Keep Google imagery in a bounded memory-only texture cache; do not prefetch, create an offline cache, or persist tile bytes. Keep OSM cache policy independent.
+4. BYOK keys are user-supplied and kept in process memory by default. Desktop users may explicitly opt in to saving the key in their current OS user's credential store (Windows Credential Manager, macOS Keychain, or Secret Service on supported Linux/BSD desktops). Never serialize keys or session tokens into drawings, profile JSON, logs, source control, or exports. Web builds remain session-only. Warn that Google bills tile requests and that users should restrict the key to Map Tiles API.
 
 **Exit:** provider terms are met, failures are contained, and the selected sources work on supported platforms.
 
@@ -121,15 +124,19 @@ Before coding, record an ADR for per-drawing persistence. Prefer a non-entity do
 3. Run `cargo xtask ci`, including `cargo xtask layers` and `cargo xtask wasm`; visually inspect canvas screenshots at several zoom levels and on a large drawing.
 4. Update relevant `docs/` status and roadmap material when the feature is prioritized and accepted.
 
+### Optional anchor-based alignment
+
+Available separately from CRS selection through `MAP.GEOREF.ALIGN` / View > Map > Align Drawing to Map. It requires a CRS to have been selected first and never changes drawing entities. The interactive flow accepts a drawing anchor picked or typed in CAD coordinates and its matching map location as latitude,longitude; CADCraft converts that WGS 84 point into the selected project CRS. Programmatic callers may instead provide projected easting,northing values. Pressing Enter after the first pair applies translation only; supplying a second matched pair derives uniform scale and rotation. The command validates geographic bounds and that matched points define a finite, non-degenerate transform, reports the resulting CRS/scale/rotation, and persists the registration using the existing sidecar path. CRS-only MGA selection remains unchanged and continues to preserve already-correct survey coordinates.
+
 ## 5. Acceptance criteria
 
 - Off/Street/Satellite mode and opacity behave predictably; attribution remains legible over the map.
 - A map is always behind CAD geometry and does not participate in CAD editing, snapping, selection, measurement, or undo.
 - Map and drawing remain spatially registered through pan, zoom, window zoom, and viewport resize.
-- CRS is explicit; unknown CRS never produces a silently misleading overlay. EPSG:7855 has a known-point and round-trip test.
+- CRS is explicit; unknown CRS never produces a silently misleading overlay. For an already-correct MGA drawing, selecting the zone uses its coordinates unchanged and never assumes `(0,0)` is the origin. Optional anchor alignment updates only map registration and is validated independently from CRS-only selection. Every offered MGA CRS has transform coverage, including known-point and round-trip coverage for GDA2020 / MGA zone 55 (EPSG:7855).
 - Map failures, missing network, invalid provider response, and bad saved metadata do not crash or corrupt the drawing.
 - Saving/reopening preserves all CAD entities and unknown file content; map metadata follows the agreed persistence model.
-- Provider attribution and API/storage/rate-limit rules are respected; cache behavior is source-specific.
+- Provider attribution and API/storage/rate-limit rules are respected; cache behavior is source-specific. Google satellite requests use a current Map Tiles API session and viewport copyright metadata, with no persistent tile cache.
 - Native and wasm checks pass; no UI dependency leaks below `ui-egui` and no network dependency leaks into geometry/rendering.
 - CAD-only export remains unchanged unless a future explicit “include map” export is designed and provider terms permit it.
 
@@ -142,7 +149,7 @@ Before coding, record an ADR for per-drawing persistence. Prefer a non-entity do
 | Street tile source | Attribution, rate limits, reliability, cache policy | Select source before production requests |
 | Satellite source | Commercial/internal-use licensing and cost | Separate selection and terms review |
 | Performance | Image decoding, network latency, large canvases | Async loading, bounded cache, cancellation, profiling |
-| Drawing intent | CAD units alone do not establish location or CRS | Require explicit user georeferencing |
+| Drawing intent | CAD units alone do not establish location or CRS | Require explicit CRS selection; keep coordinate alignment opt-in and separate |
 
 ## 7. Repository references
 

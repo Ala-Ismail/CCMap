@@ -661,9 +661,13 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
     let t = Tokens::get();
     let s = app.session.drafting_settings();
     let wb = xf.world_bounds();
-    if s.gridmode && s.isodraft {
+    // The drafting grid is useful against a plain canvas, but obscures map detail and
+    // parcel boundaries. Keep the user's grid setting intact and suppress only its
+    // visual overlay while a basemap mode is selected.
+    let map_is_on = app.session.state().is_ok_and(|state| state.map.mode != cadcraft_map::MapMode::Off);
+    if s.gridmode && !map_is_on && s.isodraft {
         draw_iso_grid(app, p, xf);
-    } else if s.gridmode {
+    } else if s.gridmode && !map_is_on {
         let major_n = f64::from(s.gridmajor.max(1));
         let unit = if s.gridunit.x == 0.0 { s.snapunit.x } else { s.gridunit.x };
         let minor = adaptive(unit, xf.scale, 8.0);
@@ -1621,7 +1625,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         None => {
             blockedit::wash(app, &painter, rect);
-            map_status = crate::map::paint_background(&app.session, &mut app.map_tiles, &painter, &xf, rect);
+            map_status = crate::map::paint_background(&app.session, &mut app.map_tiles, &mut app.google_map_tiles, &painter, &xf, rect);
             draw_grid(app, &painter, &xf);
             Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b())
         }
@@ -1836,7 +1840,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         draw_viewcube(app, ui, rect);
     }
     viewport_label(&painter, rect);
-    crate::map::paint_overlay(&painter, rect, map_status);
+    let google_diagnostic =
+        app.session.state().ok().filter(|state| state.map.mode == cadcraft_map::MapMode::Satellite).map(|_| app.google_map_tiles.diagnostic());
+    crate::map::paint_overlay(
+        &painter,
+        rect,
+        map_status,
+        app.google_map_tiles.attribution(),
+        app.google_map_tiles.request_status(),
+        google_diagnostic.as_deref(),
+    );
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.

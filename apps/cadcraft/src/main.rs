@@ -320,6 +320,9 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            if let Err(error) = app.load_remembered_google_map_key() {
+                app.set_status(format!("Google Maps key could not be restored: {error}"));
+            }
             let (workspace, restored, workspace_error) = workspace::Workspace::load();
             if let Some(ui) = restored {
                 app.ui = ui;
@@ -407,7 +410,8 @@ mod tests {
         let path = directory.join("survey.dxf");
         let path_text = path.to_string_lossy().to_string();
         let mut original = cadcraft_engine::Session::new();
-        assert!(original.execute("map.georef.set", &json!({"crs":"EPSG:7855", "drawingAnchor":[0,0], "projectAnchor":[320000,5813000]})).is_ok());
+        assert!(original.execute("map.georef.set", &json!({"crs":"EPSG:7855"})).is_ok());
+        assert!(original.execute("map.georef.align", &json!({"drawingAnchor":[0,0], "projectAnchor":[320000,5813000], "secondDrawingAnchor":[10,0], "secondProjectAnchor":[320000,5813020]})).is_ok());
         assert!(original.execute("saveas", &json!({"path":path_text})).is_ok());
         let sidecar = cadcraft_io::map_sidecar_path(&path);
         assert!(sidecar.as_ref().is_ok_and(|sidecar| sidecar.exists()));
@@ -416,6 +420,7 @@ mod tests {
         assert!(reopened.execute("open", &json!({"path":path_text})).is_ok());
         let registration = reopened.state().ok().and_then(|state| state.map.registration);
         assert_eq!(registration.map(|value| value.crs()), Some(cadcraft_map::CrsId::Gda2020MgaZone55));
+        assert!(registration.is_some_and(|value| (value.scale() - 2.0).abs() < 1e-12 && (value.rotation().to_degrees() - 90.0).abs() < 1e-12));
         assert!(reopened.execute("map.georef.clear", &json!({})).is_ok());
         assert!(reopened.execute("qsave", &json!({})).is_ok());
         assert!(sidecar.as_ref().is_ok_and(|sidecar| !sidecar.exists()));

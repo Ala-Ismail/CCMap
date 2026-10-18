@@ -119,6 +119,71 @@ impl TileProvider for OpenStreetMapStandard {
     }
 }
 
+/// Google Maps Platform satellite tiles. The API key and short-lived session token are supplied
+/// at runtime and must never be serialized with a drawing or application profile. This type only
+/// builds request URLs; callers own network, billing, attribution, and cache policy.
+#[derive(Clone, Copy)]
+pub struct GoogleMapsSatellite<'a> {
+    api_key: &'a str,
+    session: Option<&'a str>,
+}
+
+impl<'a> GoogleMapsSatellite<'a> {
+    pub fn new(api_key: &'a str, session: Option<&'a str>) -> Result<Self> {
+        if !valid_provider_credential(api_key) || session.is_some_and(|value| !valid_provider_credential(value)) {
+            return Err(MapError::InvalidProviderCredential);
+        }
+        Ok(Self { api_key, session })
+    }
+
+    pub fn session_url(self) -> String {
+        format!("https://tile.googleapis.com/v1/createSession?key={}", self.api_key)
+    }
+
+    /// URL for the attribution and imagery-zoom metadata for one visible viewport.
+    pub fn viewport_url(self, zoom: Zoom, bounds: TileBounds, session: &str) -> Result<String> {
+        if !valid_provider_credential(session) {
+            return Err(MapError::InvalidProviderCredential);
+        }
+        if !(bounds.west.is_finite() && bounds.east.is_finite() && bounds.south.is_finite() && bounds.north.is_finite())
+            || !(-180.0..=180.0).contains(&bounds.west)
+            || !(-180.0..=180.0).contains(&bounds.east)
+            || !(-90.0..=90.0).contains(&bounds.south)
+            || !(-90.0..=90.0).contains(&bounds.north)
+            || bounds.south > bounds.north
+        {
+            return Err(MapError::InvalidViewportBounds);
+        }
+        Ok(format!(
+            "https://tile.googleapis.com/tile/v1/viewport?session={session}&key={}&zoom={}&north={}&south={}&east={}&west={}",
+            self.api_key,
+            zoom.value(),
+            bounds.north,
+            bounds.south,
+            bounds.east,
+            bounds.west
+        ))
+    }
+}
+
+fn valid_provider_credential(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 512 && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+impl TileProvider for GoogleMapsSatellite<'_> {
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo { id: "google-maps-satellite", name: "Google Maps Satellite", attribution: "Google Maps", min_zoom: Zoom(0), max_zoom: Zoom(22) }
+    }
+
+    fn tile_url(&self, tile: TileId) -> Result<String> {
+        if tile.zoom.value() > self.info().max_zoom.value() {
+            return Err(MapError::ProviderZoomOutOfRange);
+        }
+        let session = self.session.ok_or(MapError::ProviderSessionRequired)?;
+        Ok(format!("https://tile.googleapis.com/v1/2dtiles/{}/{}/{}?session={session}&key={}", tile.zoom.value(), tile.x, tile.y, self.api_key))
+    }
+}
+
 /// A supported coordinate reference system.
 ///
 /// Axis ordering is always explicit in the associated coordinate type: geographic values are
@@ -131,15 +196,131 @@ pub enum CrsId {
     WebMercator,
     #[serde(rename = "EPSG:7855")]
     Gda2020MgaZone55,
+    #[serde(rename = "EPSG:7846")]
+    Gda2020MgaZone46,
+    #[serde(rename = "EPSG:7847")]
+    Gda2020MgaZone47,
+    #[serde(rename = "EPSG:7848")]
+    Gda2020MgaZone48,
+    #[serde(rename = "EPSG:7849")]
+    Gda2020MgaZone49,
+    #[serde(rename = "EPSG:7850")]
+    Gda2020MgaZone50,
+    #[serde(rename = "EPSG:7851")]
+    Gda2020MgaZone51,
+    #[serde(rename = "EPSG:7852")]
+    Gda2020MgaZone52,
+    #[serde(rename = "EPSG:7853")]
+    Gda2020MgaZone53,
+    #[serde(rename = "EPSG:7854")]
+    Gda2020MgaZone54,
+    #[serde(rename = "EPSG:7856")]
+    Gda2020MgaZone56,
+    #[serde(rename = "EPSG:28346")]
+    Gda94MgaZone46,
+    #[serde(rename = "EPSG:28347")]
+    Gda94MgaZone47,
+    #[serde(rename = "EPSG:28348")]
+    Gda94MgaZone48,
+    #[serde(rename = "EPSG:28349")]
+    Gda94MgaZone49,
+    #[serde(rename = "EPSG:28350")]
+    Gda94MgaZone50,
+    #[serde(rename = "EPSG:28351")]
+    Gda94MgaZone51,
+    #[serde(rename = "EPSG:28352")]
+    Gda94MgaZone52,
+    #[serde(rename = "EPSG:28353")]
+    Gda94MgaZone53,
+    #[serde(rename = "EPSG:28354")]
+    Gda94MgaZone54,
+    #[serde(rename = "EPSG:28355")]
+    Gda94MgaZone55,
+    #[serde(rename = "EPSG:28356")]
+    Gda94MgaZone56,
 }
 
 impl CrsId {
+    pub const MGA: [Self; 22] = [
+        Self::Gda2020MgaZone46,
+        Self::Gda2020MgaZone47,
+        Self::Gda2020MgaZone48,
+        Self::Gda2020MgaZone49,
+        Self::Gda2020MgaZone50,
+        Self::Gda2020MgaZone51,
+        Self::Gda2020MgaZone52,
+        Self::Gda2020MgaZone53,
+        Self::Gda2020MgaZone54,
+        Self::Gda2020MgaZone55,
+        Self::Gda2020MgaZone56,
+        Self::Gda94MgaZone46,
+        Self::Gda94MgaZone47,
+        Self::Gda94MgaZone48,
+        Self::Gda94MgaZone49,
+        Self::Gda94MgaZone50,
+        Self::Gda94MgaZone51,
+        Self::Gda94MgaZone52,
+        Self::Gda94MgaZone53,
+        Self::Gda94MgaZone54,
+        Self::Gda94MgaZone55,
+        Self::Gda94MgaZone56,
+    ];
+
     /// Canonical EPSG identifier for persistence and user-facing status.
     pub const fn epsg(self) -> &'static str {
         match self {
             Self::Wgs84 => "EPSG:4326",
             Self::WebMercator => "EPSG:3857",
+            Self::Gda2020MgaZone46 => "EPSG:7846",
+            Self::Gda2020MgaZone47 => "EPSG:7847",
+            Self::Gda2020MgaZone48 => "EPSG:7848",
+            Self::Gda2020MgaZone49 => "EPSG:7849",
+            Self::Gda2020MgaZone50 => "EPSG:7850",
+            Self::Gda2020MgaZone51 => "EPSG:7851",
+            Self::Gda2020MgaZone52 => "EPSG:7852",
+            Self::Gda2020MgaZone53 => "EPSG:7853",
+            Self::Gda2020MgaZone54 => "EPSG:7854",
             Self::Gda2020MgaZone55 => "EPSG:7855",
+            Self::Gda2020MgaZone56 => "EPSG:7856",
+            Self::Gda94MgaZone46 => "EPSG:28346",
+            Self::Gda94MgaZone47 => "EPSG:28347",
+            Self::Gda94MgaZone48 => "EPSG:28348",
+            Self::Gda94MgaZone49 => "EPSG:28349",
+            Self::Gda94MgaZone50 => "EPSG:28350",
+            Self::Gda94MgaZone51 => "EPSG:28351",
+            Self::Gda94MgaZone52 => "EPSG:28352",
+            Self::Gda94MgaZone53 => "EPSG:28353",
+            Self::Gda94MgaZone54 => "EPSG:28354",
+            Self::Gda94MgaZone55 => "EPSG:28355",
+            Self::Gda94MgaZone56 => "EPSG:28356",
+        }
+    }
+
+    pub const fn mga_details(self) -> Option<(&'static str, u8)> {
+        match self {
+            Self::Gda2020MgaZone46 => Some(("GDA2020", 46)),
+            Self::Gda2020MgaZone47 => Some(("GDA2020", 47)),
+            Self::Gda2020MgaZone48 => Some(("GDA2020", 48)),
+            Self::Gda2020MgaZone49 => Some(("GDA2020", 49)),
+            Self::Gda2020MgaZone50 => Some(("GDA2020", 50)),
+            Self::Gda2020MgaZone51 => Some(("GDA2020", 51)),
+            Self::Gda2020MgaZone52 => Some(("GDA2020", 52)),
+            Self::Gda2020MgaZone53 => Some(("GDA2020", 53)),
+            Self::Gda2020MgaZone54 => Some(("GDA2020", 54)),
+            Self::Gda2020MgaZone55 => Some(("GDA2020", 55)),
+            Self::Gda2020MgaZone56 => Some(("GDA2020", 56)),
+            Self::Gda94MgaZone46 => Some(("GDA94", 46)),
+            Self::Gda94MgaZone47 => Some(("GDA94", 47)),
+            Self::Gda94MgaZone48 => Some(("GDA94", 48)),
+            Self::Gda94MgaZone49 => Some(("GDA94", 49)),
+            Self::Gda94MgaZone50 => Some(("GDA94", 50)),
+            Self::Gda94MgaZone51 => Some(("GDA94", 51)),
+            Self::Gda94MgaZone52 => Some(("GDA94", 52)),
+            Self::Gda94MgaZone53 => Some(("GDA94", 53)),
+            Self::Gda94MgaZone54 => Some(("GDA94", 54)),
+            Self::Gda94MgaZone55 => Some(("GDA94", 55)),
+            Self::Gda94MgaZone56 => Some(("GDA94", 56)),
+            _ => None,
         }
     }
 }
@@ -472,13 +653,14 @@ pub fn tile_bounds(tile: TileId) -> TileBounds {
 /// Transform a supported project coordinate into WGS 84 longitude/latitude.
 ///
 /// Geographic values are returned in degrees, even though the PROJ-compatible adapter uses
-/// radians internally. The GDA2020-to-WGS84 operation is the EPSG approximation suitable for the
-/// initial map backdrop; it is not a survey-grade epoch/grid-shift transformation.
+/// radians internally. GDA94/GDA2020-to-WGS84 is approximated for the initial map backdrop; this
+/// is not a survey-grade epoch/grid-shift transformation.
 pub fn to_wgs84(crs: CrsId, point: Coordinate) -> Result<LonLat> {
     match crs {
         CrsId::Wgs84 => LonLat::new(point.x, point.y),
         CrsId::WebMercator => web_mercator_to_wgs84(point),
-        CrsId::Gda2020MgaZone55 => proj_transform(EPSG_7855, WGS84, point),
+        _ if crs.mga_details().is_some() => proj_transform(&mga_proj(crs)?, WGS84, point),
+        _ => Err(MapError::TransformationFailed),
     }
 }
 
@@ -487,15 +669,22 @@ pub fn from_wgs84(crs: CrsId, point: LonLat) -> Result<Coordinate> {
     match crs {
         CrsId::Wgs84 => Coordinate::new(point.longitude, point.latitude),
         CrsId::WebMercator => wgs84_to_web_mercator(point),
-        CrsId::Gda2020MgaZone55 => {
+        _ if crs.mga_details().is_some() => {
             let radians = Coordinate::new(point.longitude.to_radians(), point.latitude.to_radians())?;
-            proj_transform_raw(WGS84, EPSG_7855, radians)
+            proj_transform_raw(WGS84, &mga_proj(crs)?, radians)
         }
+        _ => Err(MapError::TransformationFailed),
     }
 }
 
 const WGS84: &str = "+proj=longlat +datum=WGS84 +no_defs +type=crs";
-const EPSG_7855: &str = "+proj=utm +zone=55 +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs";
+
+fn mga_proj(crs: CrsId) -> Result<String> {
+    let Some((_, zone)) = crs.mga_details() else { return Err(MapError::TransformationFailed) };
+    // The initial basemap transform treats GDA94 and GDA2020 as GRS80 realizations with a
+    // zero-parameter datum operation. This is suitable for visual map context, not survey work.
+    Ok(format!("+proj=utm +zone={zone} +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"))
+}
 
 fn proj_transform(from: &str, to: &str, point: Coordinate) -> Result<LonLat> {
     let radians = proj_transform_raw(from, to, point)?;
@@ -550,6 +739,12 @@ pub enum MapError {
     UnsupportedSidecarVersion,
     #[error("tile zoom is outside the provider's supported range")]
     ProviderZoomOutOfRange,
+    #[error("provider credential is invalid")]
+    InvalidProviderCredential,
+    #[error("provider session is required")]
+    ProviderSessionRequired,
+    #[error("viewport bounds are invalid")]
+    InvalidViewportBounds,
 }
 
 pub type Result<T> = std::result::Result<T, MapError>;
@@ -681,6 +876,25 @@ mod tests {
     }
 
     #[test]
+    fn every_offered_mga_zone_round_trips_at_its_central_meridian() {
+        for crs in CrsId::MGA {
+            let Some((_, zone)) = crs.mga_details() else { unreachable!("catalogue entries are MGA CRSs") };
+            let longitude = f64::from(zone) * 6.0 - 183.0;
+            let project = match from_wgs84(crs, lon_lat(longitude, -33.0)) {
+                Ok(value) => value,
+                Err(error) => unreachable!("MGA forward transform should work for {crs:?}: {error}"),
+            };
+            assert!((project.x() - 500_000.0).abs() < 1e-5, "{} easting", crs.epsg());
+            let back = match to_wgs84(crs, project) {
+                Ok(value) => value,
+                Err(error) => unreachable!("MGA inverse transform should work for {crs:?}: {error}"),
+            };
+            assert!((back.longitude() - longitude).abs() < 1e-8, "{} longitude", crs.epsg());
+            assert!((back.latitude() + 33.0).abs() < 1e-8, "{} latitude", crs.epsg());
+        }
+    }
+
+    #[test]
     fn providers_are_replaceable_and_validate_zoom() {
         let tile = match TileId::new(zoom(3), 4, 2) {
             Ok(value) => value,
@@ -693,5 +907,42 @@ mod tests {
             Err(error) => unreachable!("test tile must be valid: {error}"),
         };
         assert_eq!(OpenStreetMapStandard.tile_url(high), Err(MapError::ProviderZoomOutOfRange));
+    }
+
+    #[test]
+    fn google_satellite_provider_builds_safe_session_and_tile_urls() {
+        let tile = match TileId::new(zoom(15), 6294, 13288) {
+            Ok(value) => value,
+            Err(error) => unreachable!("test tile must be valid: {error}"),
+        };
+        let provider = match GoogleMapsSatellite::new("AIza_test-123", None) {
+            Ok(value) => value,
+            Err(error) => unreachable!("test key must be URL-safe: {error}"),
+        };
+        assert_eq!(provider.tile_url(tile), Err(MapError::ProviderSessionRequired));
+        assert_eq!(provider.session_url(), "https://tile.googleapis.com/v1/createSession?key=AIza_test-123");
+        let provider = match GoogleMapsSatellite::new("AIza_test-123", Some("session-123")) {
+            Ok(value) => value,
+            Err(error) => unreachable!("test session must be URL-safe: {error}"),
+        };
+        assert_eq!(
+            provider.tile_url(tile).as_deref(),
+            Ok("https://tile.googleapis.com/v1/2dtiles/15/6294/13288?session=session-123&key=AIza_test-123")
+        );
+        assert!(GoogleMapsSatellite::new("key&other=value", None).is_err());
+    }
+
+    #[test]
+    fn google_viewport_url_validates_bounds() {
+        let provider = match GoogleMapsSatellite::new("AIza_test", Some("session")) {
+            Ok(value) => value,
+            Err(error) => unreachable!("test key and session must be URL-safe: {error}"),
+        };
+        let bounds = TileBounds { west: 144.0, south: -38.0, east: 145.0, north: -37.0 };
+        assert_eq!(
+            provider.viewport_url(zoom(12), bounds, "session").as_deref(),
+            Ok("https://tile.googleapis.com/tile/v1/viewport?session=session&key=AIza_test&zoom=12&north=-37&south=-38&east=145&west=144")
+        );
+        assert_eq!(provider.viewport_url(zoom(12), TileBounds { north: 100.0, ..bounds }, "session"), Err(MapError::InvalidViewportBounds));
     }
 }
