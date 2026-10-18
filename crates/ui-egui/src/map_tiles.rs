@@ -23,6 +23,61 @@ const GOOGLE_HYBRID_SESSION_BODY: &[u8] = br#"{"mapType":"satellite","layerTypes
 
 type Completed = (TileId, ehttp::Result<ehttp::Response>);
 
+/// A device-local count of provider requests for the current calendar month. It deliberately
+/// carries no credential, URL, drawing, or tile identifier.
+struct MonthlyRequestTotal {
+    month: u32,
+    requests: u64,
+    #[cfg(not(target_arch = "wasm32"))]
+    path: Option<PathBuf>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MonthlyRequestFile {
+    month: u32,
+    requests: u64,
+}
+
+impl MonthlyRequestTotal {
+    fn new(provider: &str) -> Self {
+        let month = current_month();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = usage_path(provider);
+            let saved = path
+                .as_ref()
+                .and_then(|path| fs::read(path).ok())
+                .filter(|bytes| bytes.len() <= 1024)
+                .and_then(|bytes| serde_json::from_slice::<MonthlyRequestFile>(&bytes).ok());
+            let requests = saved.filter(|saved| saved.month == month).map_or(0, |saved| saved.requests);
+            Self { month, requests, path }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = provider;
+            Self { month, requests: 0 }
+        }
+    }
+
+    fn record(&mut self) {
+        let month = current_month();
+        if self.month != month {
+            self.month = month;
+            self.requests = 0;
+        }
+        self.requests = self.requests.saturating_add(1);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = self.path.as_ref()
+            && let Some(parent) = path.parent()
+            && fs::create_dir_all(parent).is_ok()
+            && let Ok(data) = serde_json::to_vec(&MonthlyRequestFile { month: self.month, requests: self.requests })
+        {
+            let _ = fs::write(path, data);
+        }
+    }
+}
+
 struct Entry {
     texture: TextureHandle,
     used: u64,
@@ -254,6 +309,45 @@ fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_secs())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn usage_path(provider: &str) -> Option<PathBuf> {
+    let root = if let Some(root) = std::env::var_os("CADCRAFT_CONFIG_DIR").filter(|root| !root.is_empty()) {
+        PathBuf::from(root)
+    } else {
+        #[cfg(target_os = "windows")]
+        let root = PathBuf::from(std::env::var_os("APPDATA")?).join("CADCraft");
+        #[cfg(target_os = "macos")]
+        let root = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/CADCraft");
+        #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+        let root = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?
+            .join("cadcraft");
+        root
+    };
+    root.is_absolute().then(|| root.join("map-usage").join(format!("{provider}.json")))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_month() -> u32 {
+    // UTC civil month; use a compact Gregorian conversion to avoid a date/time dependency.
+    let z = i64::try_from(unix_now() / 86_400).unwrap_or(0) + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    u32::try_from(year.saturating_mul(100).saturating_add(month)).unwrap_or(0)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current_month() -> u32 {
+    0
+}
+
 fn decode_texture(ctx: &Context, id: TileId, bytes: &[u8]) -> Option<TextureHandle> {
     let reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
     let (width, height) = reader.into_dimensions().ok()?;
@@ -300,6 +394,7 @@ pub struct GoogleTileCache {
     visible_count: usize,
     tile_requests_this_session: u64,
     tiles_loaded_this_session: u64,
+    monthly_requests: MonthlyRequestTotal,
     key_remembered: bool,
     tx: Sender<GoogleCompleted>,
     rx: Receiver<GoogleCompleted>,
@@ -327,6 +422,7 @@ impl Default for GoogleTileCache {
             visible_count: 0,
             tile_requests_this_session: 0,
             tiles_loaded_this_session: 0,
+            monthly_requests: MonthlyRequestTotal::new("google"),
             key_remembered: false,
             tx,
             rx,
@@ -449,7 +545,8 @@ impl GoogleTileCache {
             |error| error,
         );
         format!(
-            "Status: {status}\nCurrent tiles: {} visible, {} loaded, {} pending, {} queued, {} failed\nSession total: {} requests, {} tiles loaded",
+            "Status: {status} · This month: {} API requests\nCurrent tiles: {} visible, {} loaded, {} pending, {} queued, {} failed\nSession total: {} requests, {} tiles loaded",
+            self.monthly_requests.requests,
             self.visible_count,
             self.entries.len(),
             self.pending.len(),
@@ -601,6 +698,7 @@ impl GoogleTileCache {
                 let _ = tx.send(GoogleCompleted::Session(generation, result));
                 ctx.request_repaint();
             });
+            self.monthly_requests.record();
             return;
         }
         let Some((session, _)) = self.session.as_ref() else { return };
@@ -627,6 +725,7 @@ impl GoogleTileCache {
                     let _ = tx.send(GoogleCompleted::Viewport(generation, result));
                     ctx.request_repaint();
                 });
+                self.monthly_requests.record();
             } else {
                 self.viewport_pending = false;
             }
@@ -649,6 +748,7 @@ impl GoogleTileCache {
             };
             let request = ehttp::Request::get(url).with_timeout(Some(Duration::from_secs(20)));
             self.tile_requests_this_session = self.tile_requests_this_session.saturating_add(1);
+            self.monthly_requests.record();
             let tx = self.tx.clone();
             let ctx = ctx.clone();
             ehttp::fetch(request, move |result| {
@@ -694,6 +794,7 @@ pub struct EsriTileCache {
     visible_count: usize,
     requests_this_session: u64,
     tiles_loaded_this_session: u64,
+    monthly_requests: MonthlyRequestTotal,
     error: Option<String>,
 }
 
@@ -713,6 +814,7 @@ impl Default for EsriTileCache {
             visible_count: 0,
             requests_this_session: 0,
             tiles_loaded_this_session: 0,
+            monthly_requests: MonthlyRequestTotal::new("esri"),
             error: None,
         }
     }
@@ -800,7 +902,8 @@ impl EsriTileCache {
             "Ready"
         });
         format!(
-            "Status: {status}\nCurrent tiles: {} visible, {} loaded, {} pending, {} queued, {} failed\nSession total: {} requests, {} tiles loaded",
+            "Status: {status} · This month: {} API requests\nCurrent tiles: {} visible, {} loaded, {} pending, {} queued, {} failed\nSession total: {} requests, {} tiles loaded",
+            self.monthly_requests.requests,
             self.visible_count,
             self.entries.values().filter(|entry| entry.imagery.is_some() && entry.labels.is_some()).count(),
             self.pending.len(),
@@ -903,6 +1006,7 @@ impl EsriTileCache {
                 request
             };
             self.requests_this_session = self.requests_this_session.saturating_add(1);
+            self.monthly_requests.record();
             let tx = self.tx.clone();
             let ctx = ctx.clone();
             ehttp::fetch(request, move |result| {
